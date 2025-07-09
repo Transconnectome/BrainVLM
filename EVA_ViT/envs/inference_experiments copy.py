@@ -46,16 +46,9 @@ def inference(net, partition, num_classes, args):
     with torch.no_grad():
         for i, data in enumerate(tqdm(testloader),0):
             #images = images.to(f'cuda:{net.device_ids[0]}')
-            
             # images, labels = data 
             # labels = labels.cuda()
             # images = images.cuda()
-            images, labels = data 
-            if isinstance(labels, dict):
-                labels = next(iter(labels.values())).cuda(non_blocking=True)
-            else:
-                labels = labels.cuda(non_blocking=True)
-            images = images.cuda()
             if args.mixup:
                 mixed_images, labels_a, labels_b, lam = mixup_data(images, labels)
                 with torch.cuda.amp.autocast():

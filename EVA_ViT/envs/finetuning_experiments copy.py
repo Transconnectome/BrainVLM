@@ -57,13 +57,9 @@ def model_train(net, partition, optimizer, scaler, epoch, num_classes, args):
         #################### TO DO #####################
         # loss_fn = cross entropy or MSE 
         # change pred, target, mask = net(images) => latent, cls_tokens = net(images)
-        images, labels = data
-        images = images.cuda(non_blocking=True)
-        # ─── dict → Tensor 변환 ───
-        if isinstance(labels, dict):
-            labels = next(iter(labels.values())).cuda(non_blocking=True)
-        else:
-            labels = labels.cuda(non_blocking=True)
+        images, labels = data 
+        images = images.cuda()
+        labels = labels.cuda() 
         """
         if loss is calculated inside the model class, the output from the model forward method would be [loss] * number of devices. In other words, len(net(images)) == n_gpus
         """
@@ -145,12 +141,8 @@ def model_validation(net, partition, epoch, num_classes, args):
         for i, data in enumerate(valloader,0):
             #images = images.to(f'cuda:{net.device_ids[0]}')
             images, labels = data 
-            if isinstance(labels, dict):
-                labels = next(iter(labels.values())).cuda(non_blocking=True)
-            else:
-                labels = labels.cuda(non_blocking=True)
-            images = images.cuda(non_blocking=True)
-            
+            labels = labels.cuda()
+            images = images.cuda()
             if args.use_amp: 
                 if args.mixup:
                     mixed_images, labels_a, labels_b, lam = mixup_data(images, labels)

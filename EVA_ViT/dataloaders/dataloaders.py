@@ -17,6 +17,39 @@ import monai
 from monai.transforms import AddChannel, Compose, RandRotate90, Resize, NormalizeIntensity, Flip, ToTensor, RandSpatialCrop, ScaleIntensity, RandAxisFlip, RandCoarseDropout
 from monai.data import ImageDataset
 
+
+import nibabel as nib
+from scipy.ndimage import zoom
+
+
+def offline_resample(
+    input_dir: str,
+    output_dir: str,
+    target_zooms=(2.0,2.0,2.0),
+    order: int = 1,
+    suffix: str = "_2mm",
+):
+    if os.path.exists(output_dir) and os.listdir(output_dir):
+        return  # 이미 리샘플된 파일이 있으면 건너뜀
+    os.makedirs(output_dir, exist_ok=True)
+    for path in glob.glob(os.path.join(input_dir, "*.nii*")):
+        img = nib.load(path)
+        data = img.get_fdata()
+        orig_zooms = img.header.get_zooms()[:3]
+        factors = tuple(o/t for o,t in zip(orig_zooms, target_zooms))
+        down = zoom(data, factors, order=order)
+
+        hdr = img.header.copy()
+        hdr.set_zooms((*target_zooms, hdr.get_zooms()[3]))
+        base, ext = os.path.splitext(os.path.basename(path))
+        if ext == ".gz":
+            base, _ = os.path.splitext(base)
+            ext = ".nii.gz"
+        out_path = os.path.join(output_dir, f"{base}{suffix}{ext}")
+        nib.save(nib.Nifti1Image(down.astype(np.float32),
+                                 img.affine, hdr), out_path)
+
+
 def check_study_sample(study_sample):
     if study_sample == 'UKB':
         image_dir = '/scratch/connectome/3DCNN/data/2.UKB/1.sMRI_fs_cropped'
@@ -41,9 +74,7 @@ def check_study_sample(study_sample):
         phenotype_dir = '/scratch/connectome/3DCNN/data/1.ABCD/5.demo_qc/ABCD_phenotype_total.csv'  
     elif study_sample == 'GARD_T1':
         image_dir = '/scratch/connectome/3DCNN/data/3.GARD/2.T1_GARD_ALL'
-        phenotype_dir = '/scratch/connectome/3DCNN/data/3.GARD/1.demo_qc/GARD_demographics_neuroimaging.csv'
-
-
+        phenotype_dir = '/scratch/connectome/3DCNN/data/3.GARD/1.demo_qc/GARD_demographics_neuroimaging.csv'   
     return image_dir, phenotype_dir 
 
 
@@ -155,7 +186,6 @@ def partition_dataset_pretrain(imageFiles,args):
                              NormalizeIntensity(),
                              ToTensor()])
 
-
     # number of total / train,val, test
     num_total = len(imageFiles)
     num_train = int(num_total*(1 - args.val_size - args.test_size))
@@ -203,21 +233,37 @@ def partition_dataset_finetuning(imageFiles_labels, args):
         images.append(image)
         labels.append(label)
 
-    ratio = 0.3
-    patch_size = (8, 8, 8)
-    num_patches = (args.img_size[0] // patch_size[0]) + (args.img_size[1] // patch_size[1]) + (args.img_size[2] // patch_size[2])
 
-    train_transform = Compose([AddChannel(),
-                               Resize(tuple(args.img_size)),
-                               RandAxisFlip(prob=0.5),
-                               NormalizeIntensity(),
-    #                           RandCoarseDropout(holes=int(num_patches * ratio), spatial_size=patch_size, dropout_holes=True, fill_value=0,prob=0.3),
-                               ToTensor()])
+    # sexs = [lbl['sex'] if isinstance(lbl, dict) else lbl for lbl in labels]
+    # print("Before undersampling sex distribution:")
+    # print(pd.Series(sexs).value_counts())
 
-    val_transform = Compose([AddChannel(),
-                             Resize(tuple(args.img_size)),
-                             NormalizeIntensity(),
-                             ToTensor()])
+    if args.undersample:
+        keys = args.cat_target + args.num_target
+        tuple_labels = [
+            tuple(lbl[k] for k in keys)
+            for lbl in labels
+        ]
+
+        #undersampling
+        df = pd.DataFrame({
+            'image':       images,
+            'tuple_label': tuple_labels,
+            'orig_label':  labels
+        })
+
+        # 3) Find the minimum class count
+        min_count = df['tuple_label'].value_counts().min()
+
+        # 4) Sample min_count from each tuple label
+        df_balanced = pd.concat([
+            grp.sample(min_count, random_state=getattr(args, 'seed', 42))
+            for _, grp in df.groupby('tuple_label')
+        ]).sample(frac=1, random_state=getattr(args, 'seed', 42))
+
+        # 5) Restore to original lists
+        images = df_balanced['image'].tolist()
+        labels = df_balanced['orig_label'].tolist()
 
 
     # number of total / train,val, test
@@ -235,12 +281,28 @@ def partition_dataset_finetuning(imageFiles_labels, args):
     images_val = images[num_train:num_train+num_val]
     labels_val = labels[num_train:num_train+num_val]
 
+
+    ratio = 0.3
+    patch_size = (8, 8, 8)
+    num_patches = (args.img_size[0] // patch_size[0]) + (args.img_size[1] // patch_size[1]) + (args.img_size[2] // patch_size[2])
+
+    train_transform = Compose([AddChannel(),
+                               Resize(tuple(args.img_size)),
+                               RandAxisFlip(prob=0.5),
+                               NormalizeIntensity(),
+    #                           RandCoarseDropout(holes=int(num_patches * ratio), spatial_size=patch_size, dropout_holes=True, fill_value=0,prob=0.3),
+                               ToTensor()])
+
+    val_transform = Compose([AddChannel(),
+                             Resize(tuple(args.img_size)),
+                             NormalizeIntensity(),
+                             ToTensor()])
+
     # image for test set during fine tuning (exactly saying linear classifier training during linear evaluation protocol)
     images_test = images[num_train+num_val:]
     labels_test = labels[num_train+num_val:]
 
-    print("Training Sample: {}. Validation Sample: {}. Test Sample: {}".format(len(images_train), len(images_val), len(images_test)))
-
+   
     train_set = ImageDataset(image_files=images_train,labels=labels_train,transform=train_transform)
     val_set = ImageDataset(image_files=images_val,labels=labels_val,transform=val_transform)
     test_set = ImageDataset(image_files=images_test,labels=labels_test,transform=val_transform)

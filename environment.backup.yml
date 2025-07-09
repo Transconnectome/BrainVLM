@@ -2,7 +2,27 @@ name: 3DCNN
 channels:
   - defaults
 dependencies:
+  - _libgcc_mutex=0.1
+  - _openmp_mutex=5.1
+  - ca-certificates=2022.4.26
+  - certifi=2022.5.18.1
+  - ld_impl_linux-64=2.38
+  - libedit=3.1.20210910
+  - libffi=3.2.1
+  - libgcc-ng=11.2.0
+  - libgomp=11.2.0
+  - libstdcxx-ng=11.2.0
+  - ncurses=6.3
+  - openssl=1.1.1o
   - pip=21.2.2
+  - python=3.7.6
+  - readline=7.0
+  - setuptools=61.2.0
+  - sqlite=3.33.0
+  - tk=8.6.12
+  - wheel=0.37.1
+  - xz=5.2.5
+  - zlib=1.2.12
   - pip:
     - absl-py==1.1.0
     - alembic==1.8.0

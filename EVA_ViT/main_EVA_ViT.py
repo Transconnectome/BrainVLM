@@ -57,6 +57,9 @@ parser.add_argument("--mixup",default=None,type=float,required=False,help='')
 parser.add_argument("--shuffle_data", action='store_true', help = 'if you add this option in the command line like --shuffle_data, args.shuffle_data would change to be True')
 parser.set_defaults(shuffle_data=False)
 
+# undersampling option
+parser.add_argument("--undersample", action="store_true", help="Enable class-balanced undersampling before train/val/test split")
+parser.set_defaults(undersample=False)
 
 #############################
 #### finetune parameters ####
