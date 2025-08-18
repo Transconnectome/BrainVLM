@@ -29,7 +29,8 @@ def __main__():
     time_hash = datetime.datetime.now().time()
     hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
 
-    config = OmegaConf.load("/pscratch/sd/h/heehaw/BLIP_MRI/project/config/Brain_blip_t5_train_DeepSpeed_joint.yaml") 
+    #config = OmegaConf.load("/pscratch/sd/h/heehaw/BLIP_MRI/project/config/Brain_blip_t5_train_DeepSpeed_joint.yaml") 
+    config = OmegaConf.load("/pscratch/sd/h/heehaw/BLIP_MRI/project/config/Brain_blip_t5_train_DeepSpeed_joint_T1.yaml") 
 
     ### setting logger 
     wandb.login(key=config.wandb.API_KEY)
