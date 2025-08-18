@@ -96,6 +96,19 @@ class BaseDataset_T1(Dataset, Randomizable):
         inputs['input_ids'] = inputs_txt['input_ids'].squeeze()
         inputs['attention_mask'] = inputs_txt['attention_mask'].squeeze()
         inputs['labels'] = inputs['input_ids'].clone()
+
+        inputs = {} 
+        inputs['pixel_values'] = {}
+        inputs['input_ids'] = {}
+        inputs['attention_mask'] = {}
+        inputs['labels'] = {}
+
+        inputs['pixel_values']['T1'] = image
+        inputs_txt = self.tokenizer(inst, padding=True, return_tensors='pt')
+        inputs['input_ids']['T1'] = inputs_txt['input_ids'].squeeze()
+        inputs['attention_mask']['T1'] = inputs_txt['attention_mask'].squeeze()
+        inputs['labels']['T1'] = inputs['input_ids']["T1"].clone()
+
         return inputs
 
     def __len__(self) -> int: 
@@ -232,9 +245,9 @@ class ABCD_T1:
             """
         else: 
             ## prepare dataset    
-            train_dataset = BaseDataset_T1(mode='train',tokenizer=self.tokenizer, img_size=self.config_dataset.img_size, image_files=train_images, label=train_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
-            val_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.img_size, image_files=val_images, label=val_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
-            test_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.img_size, image_files=test_images, label=test_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
+            train_dataset = BaseDataset_T1(mode='train',tokenizer=self.tokenizer, img_size=self.config_dataset.T1.img_size, image_files=train_images, label=train_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
+            val_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.T1.img_size, image_files=val_images, label=val_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
+            test_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.T1.img_size, image_files=test_images, label=test_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
         return train_dataset, val_dataset, test_dataset
 
     
@@ -353,9 +366,9 @@ class UKB_T1:
             """
         else: 
             ## prepare dataset    
-            train_dataset = BaseDataset_T1(mode='train',tokenizer=self.tokenizer, img_size=self.config_dataset.img_size, image_files=train_images, label=train_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
-            val_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.img_size, image_files=val_images, label=val_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
-            test_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.img_size, image_files=test_images, label=test_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
+            train_dataset = BaseDataset_T1(mode='train',tokenizer=self.tokenizer, img_size=self.config_dataset.T1.img_size, image_files=train_images, label=train_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
+            val_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.T1.img_size, image_files=val_images, label=val_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
+            test_dataset = BaseDataset_T1(mode='eval', tokenizer=self.tokenizer, img_size=self.config_dataset.T1.img_size, image_files=test_images, label=test_label,  label_names=targets, add_context=False, sex_text=None, age_text=None)
         return train_dataset, val_dataset, test_dataset
 
     
