@@ -159,7 +159,7 @@ class ABCD_T1:
     def loading_images(self, image_dir, study_sample='ABCD', subject_id_col='subjectkey'):
         # getting each image files directory
         if study_sample.find('ABCD') != -1:
-            image_files = glob.glob(os.path.join(image_dir,'*.npy'))
+            image_files = glob.glob(os.path.join(image_dir,'*.nii.gz'))
             #if study_sample.find('_T1') != -1:
             #    image_files = glob.glob(os.path.join(image_dir,'*.npy'))
             #else:
@@ -170,7 +170,7 @@ class ABCD_T1:
 
         # pre-process subject ids with image files
         if study_sample.find('ABCD') != -1:
-            suffix_len = -4
+            suffix_len = -7
             #if study_sample.find('_T1') != -1:
             #    suffix_len = -4
             #else:
