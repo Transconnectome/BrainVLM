@@ -1,3 +1,7 @@
+import os 
+import json
+import numpy as np
+
 import torch 
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
@@ -29,38 +33,65 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 
-
 def preprocess_logits_for_metrics(logits, labels):
-    """
-    Original Trainer may have a memory leak. 
-    This is a workaround to avoid storing too many tensors that are not needed.
-    """
-    pred_ids = torch.argmax(logits[0], dim=-1)
-    return pred_ids, labels
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    
+    pred_ids = torch.argmax(logits, dim=-1)
+    return pred_ids
 
 
 @torch.no_grad()
 def compute_metrics_with_tokenizer(tokenizer):
-    def compute_metrics(pred):
-        """
-        tokenizer in this function is the input of the huggingface 'Trainer' argumet 'tokenizer' (Not the TrainingArguments)
-        """
+    def compute_metrics(eval_preds):
+        predictions, labels = eval_preds
+        labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+        
+        decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        
+        pred_genders = []
+        true_genders = []
+        
+        for pred in decoded_preds:
+            pred_clean = pred.lower().strip()
 
-        label_ids = pred.label_ids
-        label_ids[label_ids == -100] = int(32001)
-        pred_ids = pred.predictions[0]
+            import re
+            if re.search(r'\bfemale\b', pred_clean):
+                pred_genders.append(1)
+            elif re.search(r'\bmale\b', pred_clean):
+                pred_genders.append(0)
+            else:
+                pred_genders.append(-1)
 
-        label_txt = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
-        pred_txt = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-        label = [0 if sex == 'male' else 1 for sex in label_txt]
-        pred = [0 if sex == 'male' else 1 for sex in pred_txt]
-        acc = balanced_accuracy_score(label, pred)
-        f1 = f1_score(label, pred, average='macro')
+        for label in decoded_labels:
+            label_clean = label.lower().strip()
+            
+            import re
+            if re.search(r'\bfemale\b', label_clean):
+                true_genders.append(1)
+            elif re.search(r'\bmale\b', label_clean):
+                true_genders.append(0)
+            else:
+                true_genders.append(-1)
 
-        return {'accuracy': acc,
-                'f1': f1,}
+        valid_pairs = [(p, t) for p, t in zip(pred_genders, true_genders) if p != -1 and t != -1]
+        
+        if valid_pairs:
+            valid_preds, valid_trues = zip(*valid_pairs)
+            accuracy = balanced_accuracy_score(valid_trues, valid_preds)
+            f1 = f1_score(valid_trues, valid_preds, average='macro')
+        else:
+            accuracy = 0.0
+            f1 = 0.0
+        
+        metrics = {
+            'accuracy': accuracy,
+            'f1': f1
+        }  
+        return metrics
+    
     return compute_metrics
-
 
 
 class CustomTrainer(Trainer):
@@ -74,7 +105,6 @@ class CustomTrainer(Trainer):
         self._static_graph_set = False
         self.model_optimization_type= model_optimization_type
         
-
 
     def _ensure_set_static_graph(self, model):
         if not self._static_graph_set and self.is_in_train:
@@ -140,9 +170,6 @@ class CustomTrainer(Trainer):
         return outputs
 
 
-
-
-
     def _compute_modality_loss(self, model, inputs, labels=None):
         """Helper function to compute loss for a single modality"""
         outputs = model(**inputs)
@@ -159,6 +186,51 @@ class CustomTrainer(Trainer):
                 raise ValueError(f"Model did not return loss. Got keys: {','.join(outputs.keys())}")
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
             
+        return loss, outputs
+
+
+    def _compute_dummy_gradient(self, model, active_modality):
+        """Compute dummy gradient for inactive modality parameters."""
+        skip_modality = 'rsfMRI' if active_modality == 'T1' else 'T1'
+        
+        # Get embeddings module
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+            base_model = model.module
+        else:
+            base_model = model
+        
+        embeddings = (base_model.vision_tower.vision_model.embeddings 
+                    if hasattr(base_model, 'vision_tower')
+                    else base_model.vision_model.embeddings) # vision_tower is for LLaVA 
+        
+        # Compute dummy loss
+        dummy_loss = 0.
+        for name, param in embeddings.named_parameters():
+            if skip_modality in name:
+                dummy_loss += param.sum() * 0.
+        
+        return dummy_loss
+
+
+    def _compute_loss_with_labels(self, model, inputs):
+        """Compute loss handling both label_smoother and direct cases."""
+        # Extract labels if using label smoother
+        if self.label_smoother and "labels" in inputs:
+            labels = inputs.pop("labels")
+            return self._compute_modality_loss(model, inputs, labels)
+        
+        outputs = model(**inputs)
+        
+        # Extract loss from various output formats
+        if hasattr(outputs, 'loss'):
+            loss = outputs.loss
+        elif isinstance(outputs, dict) and 'loss' in outputs:
+            loss = outputs['loss']
+        elif isinstance(outputs, (tuple, list)) and len(outputs) > 0:
+            loss = outputs[0]
+        else:
+            raise ValueError(f"Model did not return a loss. Output type: {type(outputs)}")
+        
         return loss, outputs
     
 
@@ -201,49 +273,33 @@ class CustomTrainer(Trainer):
         outputs = None
         modalities = list(inputs.keys())
 
-        #assert len(modalities) == 1
-
-        if len(modalities) == 1:    # in case of sequential model optimization
+        if len(modalities) == 1:
+            # Single modality: add dummy gradient for stability
             modality = modalities[0]
             inputs_single = inputs[modality].copy()
-            skip_modality = 'rsfMRI' if modality == 'T1' else 'T1'
             
-            # Handle dummy loss
-            dummy_loss = 0.
-            if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-                for name, param in model.module.vision_model.embeddings.named_parameters(): 
-                    if f"{skip_modality}" in name: 
-                        dummy_loss += param.sum()*0.
-
-            else: 
-                for name, param in model.vision_model.embeddings.named_parameters(): 
-                    if f"{skip_modality}" in name: 
-                        dummy_loss += param.sum()*0.  
-            """
-            dummy_loss = sum(param.sum() * 0. for name, param in 
-                           (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) 
-                            else model).vision_model.embeddings.named_parameters() 
-                           if skip_modality in name)
-            """
+            # Dummy loss for unused modality parameters
+            dummy_loss = self._compute_dummy_gradient(model, modality)
             
-            # Handle labels
-            labels = inputs_single.pop("labels") if self.label_smoother and "labels" in inputs_single else None
-            loss, outputs = self._compute_modality_loss(model, inputs_single, labels)
+            # Compute actual loss
+            loss, outputs = self._compute_loss_with_labels(model, inputs_single)
             total_loss = dummy_loss + loss
-
-        
-        if len(modalities) == 2:    # in case of joint model optimization
-            #print(modalities)
-            inputs = self.repack_inputs_except_for_pixel_values(inputs, modalities)
-            labels = inputs.pop("labels") if self.label_smoother and "labels" in inputs else None
-            loss, outputs = self._compute_modality_loss(model, inputs, labels)
-            total_loss += loss
+            
+        else:  # len(modalities) >= 2
+            # Multiple modalities: repack and compute
+            inputs_repacked = self.repack_inputs_except_for_pixel_values(inputs, modalities)
+            loss, outputs = self._compute_loss_with_labels(model, inputs_repacked)
+            total_loss = loss
         
         return (total_loss, outputs) if return_outputs else total_loss
-   
+        
 
     def training_step(self, model, inputs):
         loss = super().training_step(model, inputs)
+
+        # generation result 
+        if self.state.global_step % 50 == 0 and self.state.global_step > 0:
+            self.log_generated_result(model, inputs)
 
         # Log gradients at logging steps
         modalities = list(inputs.keys())
@@ -280,7 +336,6 @@ class CustomTrainer(Trainer):
         """
 
         return loss
-    
 
     def prediction_step(
         self,
@@ -312,9 +367,12 @@ class CustomTrainer(Trainer):
             Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]: A tuple with the loss,
             logits and labels (each being optional).
         """
-        # Custom Part
-    
 
+        modalities = list(inputs.keys())
+        if len(modalities) == 1 and modalities[0] in ['T1', 'rsfMRI']:
+            inputs = inputs[modalities[0]]
+        elif len(modalities) > 1:
+            inputs = self.repack_inputs_except_for_pixel_values(inputs, modalities)
 
         has_labels = False if len(self.label_names) == 0 else all(inputs.get(k) is not None for k in self.label_names)
         # For CLIP-like models capable of returning loss values.
@@ -363,31 +421,129 @@ class CustomTrainer(Trainer):
             else:
                 if has_labels or loss_without_labels:
                     with self.compute_loss_context_manager():
-                        loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
-                    loss = loss.mean().detach()
+                        if len(modalities) == 1 and modalities[0] in ['T1', 'rsfMRI']: # do we need this logic 
+                            wrapped_inputs = {modalities[0]: inputs}
+                            loss, outputs = self.compute_loss(model, wrapped_inputs, return_outputs=True)
+                        else:
+                            loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
+                    
+                    if loss is not None:
+                        if isinstance(loss, torch.Tensor):
+                            loss = loss.mean().detach()
+                        else:
+                            loss = torch.tensor(loss)
 
                     if isinstance(outputs, dict):
-                        logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
+                        # LLaVA 
+                        logits = outputs.get('logits', None)
+                        if logits is None:
+                            # fallback
+                            logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
+                            if len(logits) == 1:
+                                logits = logits[0]
+                    elif hasattr(outputs, 'logits'):
+                        logits = outputs.logits
                     else:
-                        logits = outputs[1:]
+                        logits = outputs[1:] if len(outputs) > 1 else None
                 else:
                     loss = None
                     with self.compute_loss_context_manager():
                         outputs = model(**inputs)
                     if isinstance(outputs, dict):
-                        logits = tuple(v for k, v in outputs.items() if k not in ignore_keys)
+                        logits = outputs.get('logits', None)
+                        if logits is None:
+                            logits = tuple(v for k, v in outputs.items() if k not in ignore_keys)
+                    elif hasattr(outputs, 'logits'):
+                        logits = outputs.logits
                     else:
                         logits = outputs
+
                     # TODO: this needs to be fixed and made cleaner later.
-                    if self.args.past_index >= 0:
+                    if self.args.past_index >= 0 and hasattr(outputs, '__getitem__'):
                         self._past = outputs[self.args.past_index - 1]
 
         if prediction_loss_only:
             return (loss, None, None)
 
-        logits = nested_detach(logits)
-        if len(logits) == 1:
-            logits = logits[0]
+        if logits is not None:
+            logits = nested_detach(logits)
+            if isinstance(logits, (tuple, list)) and len(logits) == 1:
+                logits = logits[0]
+
+        if not prediction_loss_only:
+            print(f"[DEBUG] Returning:")
+            print(f"  - loss: {loss.item() if loss is not None else None}")
+            print(f"  - logits shape: {logits.shape if logits is not None else None}")
+            print(f"  - labels shape: {labels.shape if labels is not None else None}")
 
         return (loss, logits, labels)
+        
+    def log_generated_result(self, model, inputs):
+        actual_model = model.module if hasattr(model, 'module') else model
+        
+        actual_model.eval()
+        with torch.no_grad():
+            try:
+                modality = list(inputs.keys())[0]
+                sample_input = inputs[modality]
+                
+                input_ids = sample_input['input_ids'][0]
+                
+                # Search ASSISTANT: token
+                assistant_tokens = self.tokenizer.encode("ASSISTANT:", add_special_tokens=False)
+                assistant_pos = None
+                
+                for i in range(len(input_ids) - len(assistant_tokens)):
+                    if torch.equal(input_ids[i:i+len(assistant_tokens)], 
+                                torch.tensor(assistant_tokens, device=input_ids.device)):
+                        assistant_pos = i + len(assistant_tokens)
+                        break
+                
+                if assistant_pos is None:
+                    print("Warning: ASSISTANT: not found in input")
+                    return
+                
+                prompt_ids = input_ids[:assistant_pos].unsqueeze(0)
+                
+                generated_ids = actual_model.generate(
+                    pixel_values=sample_input['pixel_values'][0:1],
+                    input_ids=prompt_ids,
+                    max_new_tokens=250,
+                    do_sample=False,
+                    temperature=0.1,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
+                
+                generated_only = generated_ids[0][len(prompt_ids[0]):]
+                generated_text = self.tokenizer.decode(generated_only, skip_special_tokens=True)
+                
+                result = {
+                    "step": self.state.global_step,
+                    "epoch": float(self.state.epoch) if hasattr(self.state, 'epoch') else 0,
+                    "generated_text": generated_text,
+                }
+                
+                json_file = "generation_logs.json"
+                if os.path.exists(json_file):
+                    with open(json_file, 'r') as f:
+                        logs = json.load(f)
+                else:
+                    logs = []
+                
+                logs.append(result)
+                
+                with open(json_file, 'w') as f:
+                    json.dump(logs, f, indent=2, ensure_ascii=False)
+
+                print(f"Step: {self.state.global_step}")
+                print(f"Generated: {generated_text}")
+
+            except Exception as e:
+                print(f"[ERROR] Generation failed: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        actual_model.train()
+
+    
         

@@ -1,5 +1,5 @@
 wandb:
-    API_KEY: "d3aa43e2c12e48489b08c4a1ee19de1ff8f88e0f"
+    API_KEY: "YOUR_API_KEY"
 
 seed: 1234
 
@@ -13,7 +13,7 @@ dataset:
         img_size: [120, 120, 120]
         study_sample: ["ABCD"]
         meta_dir: ["/pscratch/sd/h/heehaw/data/1.ABCD/ABCD_phenotype_total.csv"]
-        img_dir: ["/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer"]
+        img_dir: ["/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256"]
     rsfMRI: 
         target: ["sex"]
         img_size: [96, 96, 96, 24]

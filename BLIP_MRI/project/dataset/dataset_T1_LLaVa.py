@@ -90,13 +90,11 @@ class BaseDataset_T1(Dataset, Randomizable):
 
 
     def __preprocess_as_hf__(self, image, inst, answer):
-        inputs = {} 
-        inputs['pixel_values'] = image
-        inputs_txt = self.tokenizer(text=inst+answer, padding=True, return_tensors='pt')
-        inputs['input_ids'] = inputs_txt['input_ids'].squeeze()
-        inputs['attention_mask'] = inputs_txt['attention_mask'].squeeze()
-        inputs['labels'] = inputs['input_ids'].clone()
-
+        """
+        This function tokenizes the instruction-answer pair and applies masking
+        to ensure the model only computes loss on answer tokens, preventing
+        instruction memorization while focusing on actual response generation.
+        """
         inputs = {} 
         inputs['pixel_values'] = {}
         inputs['input_ids'] = {}
@@ -104,11 +102,42 @@ class BaseDataset_T1(Dataset, Randomizable):
         inputs['labels'] = {}
 
         inputs['pixel_values']['T1'] = image
-        inputs_txt = self.tokenizer(inst, padding=True, return_tensors='pt')
-        inputs['input_ids']['T1'] = inputs_txt['input_ids'].squeeze()
-        inputs['attention_mask']['T1'] = inputs_txt['attention_mask'].squeeze()
-        inputs['labels']['T1'] = inputs['input_ids']["T1"].clone()
-
+        
+        full_text = inst + answer 
+        
+        full_encoding = self.tokenizer(
+            full_text,
+            add_special_tokens=True,
+            padding='max_length',  
+            max_length=128,
+            truncation=True,
+            return_tensors='pt'
+        )
+        
+        input_ids = full_encoding['input_ids'].squeeze(0)
+        attention_mask = full_encoding['attention_mask'].squeeze(0)
+        
+        # Initialize labels and apply padding mask
+        labels = input_ids.clone()
+        labels[attention_mask == 0] = -100
+        
+        # Find ASSISTANT: position for instruction masking
+        for variant in [" ASSISTANT:", "ASSISTANT:"]:
+            assistant_tokens = self.tokenizer.encode(variant, add_special_tokens=False)
+            assistant_tensor = torch.tensor(assistant_tokens, device=input_ids.device)
+            
+            for i in range(len(input_ids) - len(assistant_tokens) + 1):
+                if torch.equal(input_ids[i:i+len(assistant_tokens)], assistant_tensor):
+                    labels[:i+len(assistant_tokens)] = -100
+                    break 
+            else:
+                continue 
+            break 
+        
+        inputs['input_ids']['T1'] = input_ids
+        inputs['attention_mask']['T1'] = attention_mask
+        inputs['labels']['T1'] = labels
+        
         return inputs
 
     def __len__(self) -> int: 
@@ -159,7 +188,7 @@ class ABCD_T1:
     def loading_images(self, image_dir, study_sample='ABCD', subject_id_col='subjectkey'):
         # getting each image files directory
         if study_sample.find('ABCD') != -1:
-            image_files = glob.glob(os.path.join(image_dir,'*.npy'))
+            image_files = glob.glob(os.path.join(image_dir,'*.nii.gz'))
             #if study_sample.find('_T1') != -1:
             #    image_files = glob.glob(os.path.join(image_dir,'*.npy'))
             #else:
@@ -170,7 +199,7 @@ class ABCD_T1:
 
         # pre-process subject ids with image files
         if study_sample.find('ABCD') != -1:
-            suffix_len = -4
+            suffix_len = -7
             #if study_sample.find('_T1') != -1:
             #    suffix_len = -4
             #else:
