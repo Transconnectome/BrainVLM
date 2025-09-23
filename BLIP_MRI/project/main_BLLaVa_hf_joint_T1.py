@@ -27,7 +27,7 @@ def __main__():
     time_hash = datetime.datetime.now().time()
     hash_key = hashlib.sha1(str(time_hash).encode()).hexdigest()[:6]
 
-    config = OmegaConf.load("./config/Brain_LLaVa_train_DeepSpeed_joint_T1.yaml") 
+    config = OmegaConf.load("./config/Brain_LLaVa_train_DeepSpeed_joint.yaml") 
 
     ### setting logger 
     wandb.login(key=config.wandb.API_KEY)
@@ -173,8 +173,6 @@ def __main__():
         save_strategy="epoch",
         save_total_limit=3, 
         load_best_model_at_end=True,    # It enable save checkpoint after evaluation (e.g., after epoch)
-
-
     )
     
 

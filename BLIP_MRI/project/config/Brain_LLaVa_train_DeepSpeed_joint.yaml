@@ -1,5 +1,5 @@
 wandb:
-    API_KEY: "d3aa43e2c12e48489b08c4a1ee19de1ff8f88e0f"
+    API_KEY: "YOUR_API_KEY"
 
 seed: 1234
 
@@ -17,8 +17,8 @@ dataset:
     rsfMRI: 
         target: ["sex"]
         img_size: [96, 96, 96, 24]
-        study_sample: ["ABCD"]
-        img_dir: ["/pscratch/sd/h/heehaw/swift/ABCD_masked_MNI_to_TRs"]
+        study_sample: []
+        img_dir: []
         dataset_split_num: 1
         sequence_length: 24
         stride_between_seq: 1
@@ -48,7 +48,7 @@ trainer:
     learning_rate: 0.00005
     warmup_steps: 500
     weight_decay: 0.01
-    per_device_batch_size: 4
+    per_device_batch_size: 2
     gradient_accumulation_steps: 1
     gradient_checkpointing: True
     logging_steps: 1
