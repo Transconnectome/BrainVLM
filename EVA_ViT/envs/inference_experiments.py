@@ -68,7 +68,7 @@ def inference_engine(partition, num_classes, checkpoint_dir, args): #in_channels
 
     # setting network 
     if args.model.find('evavit_') != -1:
-        net = EvaViT.__dict__[args.model](img_size = args.img_size[0], use_projector=True, num_classes=num_classes, use_lora=args.use_lora)
+        net = EvaViT.__dict__[args.model](img_size = args.img_size[0], use_projector=False, num_classes=num_classes, use_lora=args.use_lora)
     elif args.model.find('evavit2_') != -1:
         #net = EvaViT.__dict__[args.model](img_size = args.img_size[0], num_classes=num_classes, use_projector=True, use_lora=args.use_lora)
         net = EvaViT.__dict__[args.model](img_size = args.img_size[0], patch_size=14,num_classes=num_classes, use_lora=args.use_lora)
