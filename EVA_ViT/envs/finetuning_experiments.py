@@ -173,7 +173,7 @@ def train_experiment(partition, num_classes, save_dir, args): #in_channels,out_d
 
     # setting network 
     if args.model.find('evavit_') != -1:
-        net = EvaViT.__dict__[args.model](img_size = args.img_size[0], num_classes=num_classes, use_lora=args.use_lora, use_projector=False, use_pretrained_weight=args.use_pretrained_weight)
+        net = EvaViT.__dict__[args.model](img_size = args.img_size[0], num_classes=num_classes, use_lora=args.use_lora, use_projector=args.use_projector, use_pretrained_weight=args.use_pretrained_weight)
 
 
     if args.load_imagenet_pretrained:
