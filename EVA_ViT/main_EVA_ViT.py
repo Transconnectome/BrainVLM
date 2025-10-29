@@ -69,8 +69,6 @@ parser.add_argument('--use_lora', action='store_true')
 parser.set_defaults(use_lora=False)
 parser.add_argument('--use_pretrained_weight', action='store_true')
 parser.set_defaults(use_pretrained_weight=False)
-parser.add_argument('--use_projector', action='store_true', help='Using adapter layers after the backbone network')
-parser.set_defaults(use_projector=False)
 
 
 #########################
