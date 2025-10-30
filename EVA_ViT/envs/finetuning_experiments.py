@@ -185,13 +185,16 @@ def train_experiment(partition, num_classes, save_dir, args): #in_channels,out_d
             if '3d' in name: 
                 param.requires_grad = True
     else:
-        for name, param in net.named_parameters():
-            if 'blocks' in name:
-                param.requires_grad = False
-            elif 'cls_' in name: 
-                param.requires_grad = False
+        if args.freeze_encoder:
+            for name, param in net.named_parameters():
+                if 'blocks' in name:
+                    param.requires_grad = False
+                elif 'cls_' in name: 
+                    param.requires_grad = False
         
-
+    # check which modules are learnable
+    for name, param in net.named_parameters():
+        print(f"{name} required_grad is set to {param.requires_grad}")
 
 
     # setting optimizer 
