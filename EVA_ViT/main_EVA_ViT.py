@@ -71,6 +71,8 @@ parser.add_argument('--use_pretrained_weight', action='store_true')
 parser.set_defaults(use_pretrained_weight=False)
 parser.add_argument('--use_projector', action='store_true', help='Using adapter layers after the backbone network')
 parser.set_defaults(use_projector=False)
+parser.add_argument('--freeze_encoder', action='store_true', help='Freeze the encoder including attention blocks and cls tokens')
+parser.set_defaults(freeze_encoder=False)
 
 
 #########################
