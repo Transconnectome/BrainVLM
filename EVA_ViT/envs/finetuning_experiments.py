@@ -258,12 +258,16 @@ def train_experiment(partition, num_classes, save_dir, args): #in_channels,out_d
     val_losses = []
 
     previous_performance = {}
-    previous_performance['ACC'] = [0.0]
-    previous_performance['abs_loss'] = [100000.0]
-    previous_performance['mse_loss'] = [100000.0]
-    if num_classes == 2:
-
+    previous_performance = {}
+    if num_classes >= 2:
+        previous_performance['ACC'] = [0.0]
         previous_performance['AUROC'] = [0.0]
+    elif num_classes == 1: 
+        previous_performance['abs_loss'] = [100000.0]
+        previous_performance['mse_loss'] = [100000.0]
+        previous_performance['r_square'] = [-10000.0]
+
+    best_checkpoint_dir = None 
 
     # training
     for epoch in tqdm(range(last_epoch, last_epoch + args.epoch)):
@@ -281,26 +285,36 @@ def train_experiment(partition, num_classes, save_dir, args): #in_channels,out_d
             # store result per epoch 
             train_losses.append(train_loss)
             val_losses.append(val_loss)
+            
             print('Epoch {}. Train Loss: {:2.2f}. Validation Loss: {:2.2f}. \n Training Prediction Performance: {}. \n Validation Prediction Performance: {}. \n Current learning rate {}. Took {:2.2f} sec'.format(epoch+1, train_loss, val_loss, train_performance, val_performance, optimizer.param_groups[0]['lr'],te-ts))
             if 'ACC' or 'AUROC' in val_performance.keys():
                 if args.metric == 'ACC':
                     previous_performance['ACC'].append(val_performance['ACC'])
                     if val_performance['ACC'] > max(previous_performance['ACC'][:-1]):
-                        checkpoint_save(net, optimizer, checkpoint_dir, epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        checkpoint_save(net, optimizer, checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt"), epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        best_checkpoint_dir = copy.copy(checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt")) 
                 elif args.metric == 'AUROC': 
                     previous_performance['AUROC'].append(val_performance['AUROC'])
                     if val_performance['AUROC'] > max(previous_performance['AUROC'][:-1]):
-                        checkpoint_save(net, optimizer, checkpoint_dir, epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        checkpoint_save(net, optimizer, checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt"), epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        best_checkpoint_dir = copy.copy(checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt")) 
             
             if 'abs_loss' or 'mse_loss' in val_performance.keys():
                 if args.metric == 'abs_loss': 
                     previous_performance['abs_loss'].append(val_performance['abs_loss'])
                     if val_performance['abs_loss'] < min(previous_performance['abs_loss'][:-1]):
-                        checkpoint_save(net, optimizer, checkpoint_dir, epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        checkpoint_save(net, optimizer, checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt"), epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        best_checkpoint_dir = copy.copy(checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt")) 
                 elif args.metric == 'mse_loss':
                     previous_performance['mse_loss'].append(val_performance['mse_loss'])
                     if val_performance['mse_loss'] < min(previous_performance['mse_loss'][:-1]):
-                        checkpoint_save(net, optimizer, checkpoint_dir, epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        checkpoint_save(net, optimizer, checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt"), epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        best_checkpoint_dir = copy.copy(checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt")) 
+                elif args.metric == 'r_square':
+                    previous_performance['r_square'].append(val_performance['r_square'])
+                    if val_performance['r_square'] > max(previous_performance['r_square'][:-1]):
+                        checkpoint_save(net, optimizer, checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt"), epoch, scheduler, scaler, args, val_performance,mode='finetune')
+                        best_checkpoint_dir = copy.copy(checkpoint_dir.replace(".pt", f"_epoch{epoch}.pt")) 
 
         
         torch.cuda.empty_cache()
@@ -311,7 +325,8 @@ def train_experiment(partition, num_classes, save_dir, args): #in_channels,out_d
     result['train_losses'] = train_losses
     result['validation_losses'] = val_losses
 
-    return vars(args), result, checkpoint_dir
+    #return vars(args), result, checkpoint_dir
+    return vars(args), result, best_checkpoint_dir
         
 
 ## ==================================== ##
