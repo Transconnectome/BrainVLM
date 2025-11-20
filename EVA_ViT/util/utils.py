@@ -144,9 +144,19 @@ def checkpoint_load(net, checkpoint_dir, optimizer, scheduler, scaler, mode='pre
         #return net, optimizer, model_state['epoch']
         return net, optimizer, scheduler, model_state['epoch'] + 1, model_state['lr'], scaler, model_state["performance_result"]  
 
-    elif mode == 'finetuning': 
+    elif mode == 'finetuning':
         model_state = torch.load(checkpoint_dir, map_location = 'cpu')
-        net = load_pretrained_model(net, model_state)
+        # Load from checkpoint saved by this codebase (uses 'model' key)
+        if 'model' in model_state:
+            msg = net.load_state_dict(model_state['model'], strict=False)
+            print(f"Loaded pretrained checkpoint from '{checkpoint_dir}'")
+            print(f"Missing keys: {msg.missing_keys}")
+            print(f"Unexpected keys: {msg.unexpected_keys}")
+        # Load from external pretrained model (uses 'net' key)
+        elif 'net' in model_state:
+            net = load_pretrained_model(net, model_state)
+        else:
+            raise ValueError(f"Checkpoint does not contain 'model' or 'net' key. Available keys: {model_state.keys()}")
         return net 
 
     elif mode == 'inference':
