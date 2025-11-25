@@ -1,0 +1,10 @@
+BLIP_MRI/project/hf_results
+BLIP_MRI/project/hf_logs
+BLIP_MRI/logs
+BLIP_MRI/project/wandb
+BLIP_MRI/project/dataset/__pychache__
+BLIP_MRI/project/model/__pychache__
+BLIP_MRI/project/utils/__pychache__
+BLIP_MRI/project/*.json
+__pycache__/
+*.pyc
