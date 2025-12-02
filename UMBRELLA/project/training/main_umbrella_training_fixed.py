@@ -8,6 +8,8 @@ Complete training pipeline with:
 - Multi-turn conversation training
 - Correct import paths
 - **NEW**: Directory-based data loading support
+- **CRITICAL**: LlavaForConditionalGeneration with custom patch embedding
+- **CRITICAL**: Proper freezing strategy (only patch embedding trainable)
 
 Key Updates:
 1. Load from umbrella_llava_train.yaml
@@ -17,11 +19,21 @@ Key Updates:
 5. LLaVA-Next model integration
 6. **Directory and file-based data loading**
 7. Task filtering support
+8. **Custom PatchEmbed integration for brain MRI**
+9. **Freezing strategy: ONLY custom patch embedding is trainable**
+
+Freezing Strategy:
+- Vision Encoder: FROZEN (encoder layers, pre_layernorm, post_layernorm)
+- Custom Patch Embedding: TRAINABLE (our custom 3D/4D MRI patch embedding)
+- Multi-Modal Projector: FROZEN (LLaVA's linear projection)
+- Language Model: FROZEN (entire language model + lm_head)
+
+This ensures only the brain MRI-specific patch embedding is trained while
+leveraging pre-trained vision and language components.
 """
 
 import torch
 import logging
-import json
 import yaml
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
@@ -31,7 +43,8 @@ import sys
 
 from transformers import (
     AutoTokenizer,
-    AutoModelForCausalLM,
+    AutoProcessor,
+    LlavaForConditionalGeneration,
     TrainingArguments,
     Trainer
 )
@@ -40,6 +53,7 @@ from transformers import (
 sys.path.append(str(Path(__file__).parent.parent))
 from dataset.umbrella_dataset_fixed import UMBRELLADataset, create_umbrella_dataset_from_config
 from dataset.umbrella_collator import UMBRELLACollator, MemoryAwareUMBRELLACollator
+from model.patch_embed import PatchEmbed
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +95,13 @@ class UMBRELLATrainingConfig:
     # Modality settings
     modality: str = "T1"  # Primary modality (T1, rsfMRI, etc.)
     img_size: List[int] = None  # Image dimensions [H, W, D] or [H, W, D, T]
+    patch_size: List[int] = None  # Patch size for modality
+
+    # Multi-modality settings (for custom PatchEmbed)
+    T1_img_size: List[int] = None
+    T1_patch_size: List[int] = None
+    rsfMRI_img_size: List[int] = None
+    rsfMRI_patch_size: List[int] = None
 
     # Training hyperparameters
     batch_size: int = 2
@@ -134,14 +155,26 @@ class UMBRELLATrainingConfig:
         modality = 'T1'  # TODO: Make this configurable
         modality_dataset_config = dataset_config.get(modality, {})
 
-        # Get image size from config
+        # Get image size and patch size from config
         img_size = modality_dataset_config.get('img_size', [96, 96, 96])
+        patch_size = model_config.get(modality, {}).get('patch_size', [10, 10, 10])
+
+        # Get T1 and rsfMRI settings for custom PatchEmbed
+        T1_config = dataset_config.get('T1', {})
+        T1_model_config = model_config.get('T1', {})
+        rsfMRI_config = dataset_config.get('rsfMRI', {})
+        rsfMRI_model_config = model_config.get('rsfMRI', {})
 
         # Create config instance
         return cls(
             model_name=model_config.get('hf_name', 'llava-hf/llava-interleave-qwen-0.5b-hf'),
             modality=modality,
             img_size=img_size,
+            patch_size=patch_size,
+            T1_img_size=T1_config.get('img_size', [96, 96, 96]),
+            T1_patch_size=T1_model_config.get('patch_size', [10, 10, 10]),
+            rsfMRI_img_size=rsfMRI_config.get('img_size', [96, 96, 96, 24]),
+            rsfMRI_patch_size=rsfMRI_model_config.get('patch_size', [16, 16, 16, 3]),
             batch_size=trainer_config.get('per_device_batch_size', 2),
             gradient_accumulation_steps=trainer_config.get('gradient_accumulation_steps', 1),
             learning_rate=trainer_config.get('learning_rate', 5e-5),
@@ -152,6 +185,194 @@ class UMBRELLATrainingConfig:
             output_dir=trainer_config.get('ckpt_dir', './hf_results/umbrella'),
             wandb_api_key=yaml_config.get('wandb', {}).get('API_KEY')
         )
+
+
+def create_llava_model_with_custom_patch_embed(config: UMBRELLATrainingConfig) -> LlavaForConditionalGeneration:
+    """
+    Create LlavaForConditionalGeneration model with custom 3D/4D brain MRI patch embedding.
+
+    This function:
+    1. Loads pre-trained LlavaForConditionalGeneration model
+    2. Replaces default patch embedding with custom PatchEmbed for brain MRI
+    3. Applies freezing strategy: ONLY custom patch embedding is trainable
+    4. Enables gradient checkpointing for memory efficiency
+
+    Freezing Strategy:
+    - Vision Encoder (encoder layers, layernorms): FROZEN
+    - Custom Patch Embedding (our 3D/4D MRI embedding): TRAINABLE
+    - Multi-Modal Projector (LLaVA's projection): FROZEN
+    - Language Model (entire LLM + lm_head): FROZEN
+
+    Why this strategy?
+    - Pre-trained vision encoder already understands visual features
+    - Pre-trained language model already understands language
+    - Only need to learn how to convert brain MRI patches to features
+    - Custom patch embedding is the ONLY brain-specific component
+
+    Args:
+        config: Training configuration with model settings
+
+    Returns:
+        LlavaForConditionalGeneration model with custom patch embedding and proper freezing
+
+    Raises:
+        RuntimeError: If model structure is unexpected
+    """
+    logger.info("=" * 80)
+    logger.info("INITIALIZING LlavaForConditionalGeneration WITH CUSTOM PATCH EMBED")
+    logger.info("=" * 80)
+
+    # Step 1: Load pre-trained LlavaForConditionalGeneration
+    logger.info(f"Loading pre-trained model: {config.model_name}")
+    model = LlavaForConditionalGeneration.from_pretrained(config.model_name)
+    logger.info("  Pre-trained model loaded successfully")
+
+    # Step 2: Create custom PatchEmbed for brain MRI
+    logger.info("Creating custom PatchEmbed for brain MRI (3D/4D volumes)...")
+    logger.info(f"  T1 image size: {config.T1_img_size}")
+    logger.info(f"  T1 patch size: {config.T1_patch_size}")
+    logger.info(f"  rsfMRI image size: {config.rsfMRI_img_size}")
+    logger.info(f"  rsfMRI patch size: {config.rsfMRI_patch_size}")
+
+    # Get embedding dimension from original model
+    original_patch_embedding = model.vision_tower.vision_model.embeddings.patch_embedding
+    embed_dim = int(original_patch_embedding.out_channels)
+    logger.info(f"  Embedding dimension: {embed_dim}")
+
+    # Initialize custom patch embedding
+    patch_embed = PatchEmbed(
+        T1_size=config.T1_img_size,
+        T1_patch_size=config.T1_patch_size,
+        rsfMRI_size=config.rsfMRI_img_size,
+        rsfMRI_patch_size=config.rsfMRI_patch_size,
+        in_chans=1,  # Single channel for MRI
+        embed_dim=embed_dim
+    )
+    logger.info("  Custom PatchEmbed created")
+
+    # Step 3: Replace original embeddings with custom patch embedding
+    logger.info("Replacing original patch embedding with custom PatchEmbed...")
+    setattr(model.vision_tower.vision_model, "embeddings", patch_embed)
+    logger.info("  Custom PatchEmbed integrated into model")
+
+    # Step 4: Apply freezing strategy
+    logger.info("\n" + "=" * 80)
+    logger.info("APPLYING FREEZING STRATEGY")
+    logger.info("=" * 80)
+
+    # Count parameters before freezing
+    total_params_before = sum(p.numel() for p in model.parameters())
+    trainable_params_before = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    logger.info(f"Before freezing:")
+    logger.info(f"  Total parameters: {total_params_before:,}")
+    logger.info(f"  Trainable parameters: {trainable_params_before:,}")
+
+    # Freeze vision encoder except embeddings
+    logger.info("\n1. Vision Encoder Freezing:")
+    vision_frozen_count = 0
+    vision_trainable_count = 0
+
+    for name, param in model.vision_tower.vision_model.named_parameters():
+        if 'encoder' in name:
+            param.requires_grad = False
+            vision_frozen_count += param.numel()
+        elif 'pre_layernorm' in name:
+            param.requires_grad = False
+            vision_frozen_count += param.numel()
+        elif 'post_layernorm' in name:
+            param.requires_grad = False
+            vision_frozen_count += param.numel()
+        elif 'embeddings' in name:
+            param.requires_grad = True
+            vision_trainable_count += param.numel()
+            logger.info(f"  TRAINABLE: {name} ({param.numel():,} params)")
+
+    logger.info(f"  Vision encoder frozen: {vision_frozen_count:,} parameters")
+    logger.info(f"  Custom embeddings trainable: {vision_trainable_count:,} parameters")
+
+    # Freeze multi-modal projector (LLaVA's linear projection)
+    logger.info("\n2. Multi-Modal Projector Freezing:")
+    projector_frozen_count = 0
+    for name, param in model.named_parameters():
+        if 'multi_modal_projector' in name:
+            param.requires_grad = False
+            projector_frozen_count += param.numel()
+            logger.info(f"  FROZEN: {name} ({param.numel():,} params)")
+
+    logger.info(f"  Multi-modal projector frozen: {projector_frozen_count:,} parameters")
+
+    # Freeze language model completely
+    logger.info("\n3. Language Model Freezing:")
+    lm_frozen_count = 0
+    for name, param in model.named_parameters():
+        if 'language_model' in name:
+            param.requires_grad = False
+            lm_frozen_count += param.numel()
+        elif 'lm_head' in name:
+            param.requires_grad = False
+            lm_frozen_count += param.numel()
+
+    logger.info(f"  Language model frozen: {lm_frozen_count:,} parameters")
+
+    # Step 5: Enable gradient checkpointing
+    if config.gradient_checkpointing:
+        logger.info("\n4. Gradient Checkpointing:")
+        model.gradient_checkpointing_enable()
+        logger.info("  Gradient checkpointing ENABLED")
+
+    # Final parameter count
+    total_params_after = sum(p.numel() for p in model.parameters())
+    trainable_params_after = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params_after = total_params_after - trainable_params_after
+
+    logger.info("\n" + "=" * 80)
+    logger.info("FREEZING SUMMARY")
+    logger.info("=" * 80)
+    logger.info(f"Total parameters: {total_params_after:,}")
+    logger.info(f"Trainable parameters: {trainable_params_after:,} ({100 * trainable_params_after / total_params_after:.2f}%)")
+    logger.info(f"Frozen parameters: {frozen_params_after:,} ({100 * frozen_params_after / total_params_after:.2f}%)")
+    logger.info("\nTrainable components:")
+    logger.info("  - Custom PatchEmbed (3D/4D brain MRI patch embedding)")
+    logger.info("\nFrozen components:")
+    logger.info("  - Vision encoder (encoder layers, layernorms)")
+    logger.info("  - Multi-modal projector (LLaVA projection)")
+    logger.info("  - Language model (entire LLM + lm_head)")
+    logger.info("=" * 80)
+
+    # Validation: Ensure only embeddings are trainable
+    trainable_param_names = [name for name, param in model.named_parameters() if param.requires_grad]
+    logger.info("\nValidation - All trainable parameters:")
+    for name in trainable_param_names:
+        logger.info(f"  {name}")
+
+    # Safety check: Verify embeddings are trainable
+    embeddings_trainable = any('embeddings' in name for name in trainable_param_names)
+    if not embeddings_trainable:
+        logger.error("CRITICAL: Custom patch embedding is NOT trainable!")
+        raise RuntimeError("Custom patch embedding must be trainable but isn't. Check freezing logic.")
+
+    # Safety check: Verify other components are frozen
+    vision_encoder_frozen = all(
+        not param.requires_grad
+        for name, param in model.vision_tower.vision_model.named_parameters()
+        if 'encoder' in name or 'layernorm' in name
+    )
+    if not vision_encoder_frozen:
+        logger.warning("WARNING: Vision encoder has trainable parameters (expected frozen)")
+
+    lm_frozen = all(
+        not param.requires_grad
+        for name, param in model.named_parameters()
+        if 'language_model' in name or 'lm_head' in name
+    )
+    if not lm_frozen:
+        logger.warning("WARNING: Language model has trainable parameters (expected frozen)")
+
+    logger.info("\nModel initialization complete!")
+    logger.info("=" * 80 + "\n")
+
+    return model
 
 
 class UMBRELLATrainingPipeline:
@@ -174,8 +395,13 @@ class UMBRELLATrainingPipeline:
         if config.task_filter:
             logger.info(f"Task filter: {config.task_filter}")
 
-    def setup_model(self) -> Tuple[AutoModelForCausalLM, AutoTokenizer]:
-        """Load and setup LLaVA model and tokenizer."""
+    def setup_model(self) -> Tuple[LlavaForConditionalGeneration, AutoTokenizer]:
+        """
+        Load and setup LLaVA model with custom patch embedding and tokenizer.
+
+        Returns:
+            Tuple of (model, tokenizer)
+        """
         tokenizer_name = self.config.tokenizer_name or self.config.model_name
 
         logger.info(f"Loading tokenizer: {tokenizer_name}")
@@ -197,25 +423,13 @@ class UMBRELLATrainingPipeline:
             logger.error("Tokenizer does not support <|im_start|> token!")
             logger.warning("Proceeding anyway, but training may fail")
 
-        logger.info(f"Loading model: {self.config.model_name}")
-        model = AutoModelForCausalLM.from_pretrained(
-            self.config.model_name,
-            torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
-            device_map="auto",
-            trust_remote_code=True  # Required for LLaVA models
-        )
+        # Create model with custom patch embedding
+        logger.info(f"Initializing model with custom patch embedding...")
+        model = create_llava_model_with_custom_patch_embed(self.config)
 
         # Resize embeddings to accommodate new tokens
         model.resize_token_embeddings(len(tokenizer))
         logger.info(f"Resized embeddings to {len(tokenizer)} tokens")
-
-        # Enable gradient checkpointing if configured
-        if self.config.gradient_checkpointing:
-            if hasattr(model, 'gradient_checkpointing_enable'):
-                model.gradient_checkpointing_enable()
-                logger.info("Gradient checkpointing enabled")
-            else:
-                logger.warning("Model does not support gradient checkpointing")
 
         return model, tokenizer
 

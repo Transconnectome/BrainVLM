@@ -189,26 +189,46 @@ class CustomTrainer(Trainer):
         return loss, outputs
 
 
-    def _compute_dummy_gradient(self, model, active_modality):
-        """Compute dummy gradient for inactive modality parameters."""
-        skip_modality = 'rsfMRI' if active_modality == 'T1' else 'T1'
-        
+    def _compute_dummy_gradient(self, model, active_modality, modalities=['T1', 'rsfMRI', 'dMRI']):
+        """
+        Compute dummy gradient for inactive modality parameters.
+
+        This ensures all modality embeddings receive gradients even when only one modality
+        is present in the batch. Without this, PyTorch would skip gradient computation for
+        unused parameters, causing training instability.
+
+        Args:
+            model: The model being trained
+            active_modality: Currently active modality (e.g., 'T1', 'rsfMRI', 'dMRI')
+            modalities: List of all modalities to consider for gradient computation
+
+        Returns:
+            dummy_loss: A scalar tensor that contributes to gradient computation
+        """
         # Get embeddings module
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
             base_model = model.module
         else:
             base_model = model
-        
-        embeddings = (base_model.vision_tower.vision_model.embeddings 
+
+        embeddings = (base_model.vision_tower.vision_model.embeddings
                     if hasattr(base_model, 'vision_tower')
-                    else base_model.vision_model.embeddings) # vision_tower is for LLaVA 
-        
-        # Compute dummy loss
-        dummy_loss = 0.
+                    else base_model.vision_model.embeddings)  # vision_tower is for LLaVA
+
+        # Compute dummy loss for all inactive modalities
+        # Use a very small scaling factor (1e-7) instead of 0 to maintain gradient flow
+        dummy_loss = torch.tensor(0., dtype=torch.float32, device=next(model.parameters()).device, requires_grad=True)
+
+        scaling_factor = 1e-7  # Small enough to not affect training, but large enough for gradient flow
+
         for name, param in embeddings.named_parameters():
-            if skip_modality in name:
-                dummy_loss += param.sum() * 0.
-        
+            if param.requires_grad:
+                # For inactive modalities, add their contribution with small scaling
+                for modality in modalities:
+                    if modality != active_modality and modality in name:
+                        # Create a proper gradient path: sum of parameters scaled down
+                        dummy_loss = dummy_loss + (param.sum() * scaling_factor)
+
         return dummy_loss
 
 
@@ -235,38 +255,45 @@ class CustomTrainer(Trainer):
     
 
     def compute_loss(self, model, inputs, return_outputs=False):
-        #TODO 
-        #현재 방식의 코드에서는 태생적으로 순차적으로 두개의 모달리티로부터 각각 loss를 얻어서 합한 loss로 최적화할 수가 없다. 
-        #왜냐하면 한개의 모달리티로부터 Loss를 얻기 위해서는 patch layer를 제외한 나머지 layer들을 전부 거쳐야하는데, 이렇게 하고 나면 거쳐간 layer들을 업데이트하지 않은 상태에서 두번째 모달리티의 데이터가 이런 layer들을 거치게 되면서 backward()에서 에러가 발생한다. 
-        #그런데 흥미로운 점은 x-instruct 페이퍼에서는 다양한 모달리티로부터 얻은 Loss들을 joint optimization하지 않아도 multi-modal network를 학습할 수 있음을 보였다. 
-        #다만, OneLLM은 애초에 라우팅하는 것을 특장점으로 삼았기 때문에 joint optimization을 한다 
-        # joint optimization을 위해서는 원래 코드를 짜고, 그 코드 위에다가 weight를 얹는 방식으로 진행해야할 것 같다.
-
         """
-        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+        Compute unified NLL loss for multi-modal learning.
 
-        Subclass and override for custom behavior.
+        This function handles two important cases:
 
-        inputs = 
+        1. SINGLE MODALITY BATCH:
+           When only one modality (e.g., T1, rsfMRI, or dMRI) is present in the batch,
+           we compute:
+           - dummy_loss: Small weighted loss for inactive modality embeddings
+           - actual_loss: Real NLL loss for the active modality
+           - total_loss = dummy_loss + actual_loss
+
+           The dummy loss ensures all modality embeddings receive gradients, which is
+           critical for PyTorch to properly update all trainable parameters. Without it,
+           inactive modality parameters would have no gradient flow during backpropagation,
+           causing training instability.
+
+        2. MULTIPLE MODALITY BATCH:
+           When multiple modalities are in the same batch (e.g., [T1, rsfMRI]), we:
+           - Repack inputs by concatenating tokens while keeping pixel_values modality-keyed
+           - Compute unified NLL loss across all modalities
+           - All modality embeddings naturally receive gradients from their respective samples
+
+        Input format:
         {
-            'T1':
-                {
-                'pixel_values': torch.tensor([torch.tensor]),
-                'input_ids': torch.tensor([torch.tensor]),
-                'attention_mask': torch.tensor([torch.tensor]),
-                'labels': torch.tensor([torch.tensor])
-                },
-
-            'rsfMRI':
-                {
-                'pixel_values': torch.tensor([torch.tensor]),
-                'input_ids': torch.tensor([torch.tensor]),
-                'attention_mask': torch.tensor([torch.tensor]),
-                'labels': torch.tensor([torch.tensor])
-                },
-
+            'T1': {
+                'pixel_values': (B, 1, 128, 128, 128),
+                'input_ids': (B, seq_len),
+                'attention_mask': (B, seq_len),
+                'labels': (B, seq_len)
+            },
+            'rsfMRI': {
+                'pixel_values': (B, 1, 96, 96, 96, T),
+                'input_ids': (B, seq_len),
+                'attention_mask': (B, seq_len),
+                'labels': (B, seq_len)
+            },
+            'dMRI': {...}
         }
-        
         """
         self._ensure_set_static_graph(model)
         total_loss = 0.
@@ -274,58 +301,62 @@ class CustomTrainer(Trainer):
         modalities = list(inputs.keys())
 
         if len(modalities) == 1:
-            # Single modality: add dummy gradient for stability
+            # Single modality batch: use dummy loss for gradient stability
             modality = modalities[0]
             inputs_single = inputs[modality].copy()
-            
-            # Dummy loss for unused modality parameters
+
+            # Compute dummy loss for unused modality embeddings
+            # This ensures all parameters receive gradient updates even if not used in this batch
             dummy_loss = self._compute_dummy_gradient(model, modality)
-            
-            # Compute actual loss
+
+            # Compute actual loss for the active modality
             loss, outputs = self._compute_loss_with_labels(model, inputs_single)
+
+            # Combine: dummy loss (small contribution) + actual loss (primary signal)
             total_loss = dummy_loss + loss
-            
+
         else:  # len(modalities) >= 2
-            # Multiple modalities: repack and compute
+            # Multiple modalities: repack and compute unified loss
             inputs_repacked = self.repack_inputs_except_for_pixel_values(inputs, modalities)
             loss, outputs = self._compute_loss_with_labels(model, inputs_repacked)
             total_loss = loss
-        
+
         return (total_loss, outputs) if return_outputs else total_loss
         
 
     def training_step(self, model, inputs):
         loss = super().training_step(model, inputs)
 
-        # generation result 
+        # generation result
         if self.state.global_step % 50 == 0 and self.state.global_step > 0:
             self.log_generated_result(model, inputs)
 
         # Log gradients at logging steps
-        modalities = list(inputs.keys())
-        if len(modalities) == 1:
-            if self.args.logging_steps > 0 and self.state.global_step % self.args.logging_steps == 0:
-                grad_norms = {}
-                for name, param in model.named_parameters():
-                    if param.requires_grad and param.grad is not None:
-                        if modalities[0] in name:
-                            if 'bias' in name: 
-                                continue
-                            else:
-                                grad_norms[f"grad/{name}"] = param.grad.norm().item()
-        
-        else: 
-            if self.args.logging_steps > 0 and self.state.global_step % self.args.logging_steps == 0:
-                grad_norms = {}
-                for name, param in model.named_parameters():
-                    if param.requires_grad and param.grad is not None:
-                        if 'bias' in name: 
-                                continue
-                        else:
-                            grad_norms[f"grad/{name}"] = param.grad.norm().item()
+        # Always log all gradients to verify dummy gradient is working
+        if self.args.logging_steps > 0 and self.state.global_step % self.args.logging_steps == 0:
+            grad_norms = {}
+            modalities = list(inputs.keys())
 
-        # Log to loggers through trainer's log() method
-        self.log(grad_norms)
+            for name, param in model.named_parameters():
+                if param.requires_grad and param.grad is not None:
+                    # Skip bias terms
+                    if 'bias' in name:
+                        continue
+
+                    grad_norm = param.grad.norm().item()
+
+                    # For single modality, log active and inactive modality gradients separately
+                    if len(modalities) == 1 and 'embeddings' in name:
+                        active_modality = modalities[0]
+                        # Check if gradient belongs to active or inactive modality
+                        is_active = active_modality in name
+                        modality_label = f"[{active_modality}]" if is_active else "[inactive]"
+                        grad_norms[f"grad/{modality_label}/{name}"] = grad_norm
+                    else:
+                        grad_norms[f"grad/{name}"] = grad_norm
+
+            # Log to loggers through trainer's log() method
+            self.log(grad_norms)
 
 
         """
@@ -369,7 +400,7 @@ class CustomTrainer(Trainer):
         """
 
         modalities = list(inputs.keys())
-        if len(modalities) == 1 and modalities[0] in ['T1', 'rsfMRI']:
+        if len(modalities) == 1 and modalities[0] in ['T1', 'rsfMRI', 'dMRI']:
             inputs = inputs[modalities[0]]
         elif len(modalities) > 1:
             inputs = self.repack_inputs_except_for_pixel_values(inputs, modalities)
@@ -448,7 +479,11 @@ class CustomTrainer(Trainer):
                 else:
                     loss = None
                     with self.compute_loss_context_manager():
-                        outputs = model(**inputs)
+                        if len(modalities) == 1 and modalities[0] in ['T1', 'rsfMRI', 'dMRI']:
+                            wrapped_inputs = {modalities[0]: inputs}
+                            outputs = model(**wrapped_inputs)
+                        else:
+                            outputs = model(**inputs)
                     if isinstance(outputs, dict):
                         logits = outputs.get('logits', None)
                         if logits is None:

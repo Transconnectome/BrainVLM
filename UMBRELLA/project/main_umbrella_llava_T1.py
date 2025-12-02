@@ -47,7 +47,7 @@ def __main__():
 
     ### setting tokenizer
     from transformers import AutoProcessor
-    tokenizer = AutoProcessor.from_pretrained("llava-hf/llava-1.5-7b-hf").tokenizer
+    tokenizer = AutoProcessor.from_pretrained(config.model.hf_name).tokenizer
 
 
     ### setting T1 dataset
@@ -96,7 +96,7 @@ def __main__():
     #### setting model
     from model.patch_embed import PatchEmbed
     from transformers import AutoProcessor, LlavaForConditionalGeneration
-    model = LlavaForConditionalGeneration.from_pretrained("llava-hf/llava-1.5-7b-hf")
+    model = LlavaForConditionalGeneration.from_pretrained(config.model.hf_name)
     patch_embed = PatchEmbed(
             T1_size=config.dataset.T1.img_size,
             T1_patch_size=config.model.T1.patch_size,

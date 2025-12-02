@@ -10,7 +10,7 @@ cd /pscratch/sd/h/heehaw/UMBRELLA/project   #TODO: Change to your own scratch sp
 module load python
 module load cpe/23.03
 
-conda activate /pscratch/sd/h/heehaw/anaconda/UMBRELLA   #TODO: Change to your own conda env
+conda activate /pscratch/sd/h/heehaw/anaconda/BrainVLM_llava   #TODO: Change to your own conda env
 
 export LIBRARY_PATH=$LD_LIBRARY_PATH
 export TORCH_EXTENSIONS_DIR=/pscratch/sd/h/heehaw   #TODO: Change to your own scratch space

@@ -2,7 +2,7 @@
 # LLaVA-based Vision-Language Model for Brain MRI Analysis
 
 wandb:
-    API_KEY: "YOUR_API_KEY"
+    API_KEY: "d3aa43e2c12e48489b08c4a1ee19de1ff8f88e0f"
 
 seed: 1234
 
@@ -13,7 +13,7 @@ dataset:
     add_context: False
     T1:
         target: ["sex"]
-        img_size: [120, 120, 120]
+        img_size: [96, 96, 96]
         study_sample: ["ABCD"]
         meta_dir: ["/pscratch/sd/h/heehaw/data/1.ABCD/ABCD_phenotype_total.csv"]
         img_dir: ["/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256"]
@@ -40,7 +40,7 @@ dataset:
 
 model:
     # LLaVA model (not BLIP)
-    hf_name: "llava-hf/llava-1.5-7b-hf"
+    hf_name: "llava-hf/llava-interleave-qwen-0.5b-hf"
     T1:
         patch_size: [10, 10, 10]
     rsfMRI:
