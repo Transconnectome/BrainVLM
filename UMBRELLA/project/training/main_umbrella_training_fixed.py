@@ -46,7 +46,8 @@ from transformers import (
     AutoProcessor,
     LlavaForConditionalGeneration,
     TrainingArguments,
-    Trainer
+    # NOTE: Using custom UMBRELLATrainer instead of HuggingFace Trainer
+    # This is CRITICAL for the image_mask fix to work!
 )
 
 # Correct import paths
@@ -54,6 +55,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from dataset.umbrella_dataset_fixed import UMBRELLADataset, create_umbrella_dataset_from_config
 from dataset.umbrella_collator import UMBRELLACollator, MemoryAwareUMBRELLACollator
 from model.patch_embed import PatchEmbed
+from training.umbrella_trainer import UMBRELLATrainer, UMBRELLATrainingArgs
 
 logger = logging.getLogger(__name__)
 
@@ -557,9 +559,9 @@ class UMBRELLATrainingPipeline:
                 greater_is_better=False if eval_dataset else None,
             )
 
-            # Create trainer
-            logger.info("Creating Trainer...")
-            trainer = Trainer(
+            # Create UMBRELLA trainer with custom compute_loss that removes image_mask
+            logger.info("Creating UMBRELLATrainer with image_mask handling...")
+            trainer = UMBRELLATrainer(
                 model=model,
                 args=training_args,
                 train_dataset=train_dataset,
@@ -567,6 +569,7 @@ class UMBRELLATrainingPipeline:
                 data_collator=collator,
                 tokenizer=tokenizer,
             )
+            logger.info("  Using custom UMBRELLATrainer.compute_loss() to remove image_mask before model forward")
 
             logger.info("\n" + "=" * 80)
             logger.info("STARTING TRAINING")
