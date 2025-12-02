@@ -26,6 +26,9 @@ from transformers import Trainer, TrainingArguments
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils import PreTrainedTokenizer
 
+# Import UMBRELLA components (these will be available when module is properly imported)
+# Deferred import inside functions to avoid circular imports
+
 logger = logging.getLogger(__name__)
 
 
@@ -517,7 +520,7 @@ class UMBRELLATrainer(Trainer):
         # Apply turn-aware masking if available
         if self.turn_mask_builder is not None and self.args.mask_human_turns:
             # Reconstruct batch for masking using SAVED metadata
-            from umbrella_collator import UMBRELLABatch
+            from dataset.umbrella_collator import UMBRELLABatch
             temp_batch = UMBRELLABatch(
                 pixel_values=inputs.get('pixel_values', torch.empty(0)),
                 input_ids=inputs['input_ids'],
@@ -559,7 +562,7 @@ class UMBRELLATrainer(Trainer):
         """Log batch-specific metrics."""
         # Turn distribution
         if self.turn_mask_builder is not None and self.args.log_turn_distribution:
-            from umbrella_collator import UMBRELLABatch
+            from dataset.umbrella_collator import UMBRELLABatch
             temp_batch = UMBRELLABatch(
                 pixel_values=inputs.get('pixel_values', torch.empty(0)),
                 input_ids=inputs['input_ids'],
