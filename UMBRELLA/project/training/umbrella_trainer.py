@@ -115,7 +115,7 @@ class TurnMaskBuilder:
             Modified labels with -100 for masked positions (batch_size, seq_len)
         """
         import json
-        
+
         try:
             conversation = json.loads(conversation_json)
         except json.JSONDecodeError as e:
@@ -445,9 +445,15 @@ class UMBRELLATrainer(Trainer):
                  tokenizer: Optional[PreTrainedTokenizer] = None,
                  compute_metrics: Optional[Any] = None,
                  callbacks: Optional[List] = None,
-                 optimizers: Optional[Tuple] = None,
+                 optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
                  preprocess_logits_for_metrics: Optional[Any] = None):
-        """Initialize UMBRELLA trainer."""
+        """
+        Initialize UMBRELLA trainer.
+
+        CRITICAL FIX: Changed optimizers default from None to (None, None) to match
+        HuggingFace Trainer's expected signature. This prevents TypeError when unpacking
+        optimizers in Trainer.__init__().
+        """
 
         super().__init__(
             model=model,
