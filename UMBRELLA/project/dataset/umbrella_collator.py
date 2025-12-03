@@ -148,6 +148,52 @@ class UMBRELLABatch:
         else:
             raise KeyError(f"UMBRELLABatch has no field '{key}'")
 
+    def get(self, key: str, default=None):
+        """
+        Dict-like get method with default value support.
+
+        CRITICAL FIX: Enables compute_loss() to use .get() method safely.
+
+        Args:
+            key: Field name
+            default: Default value if field doesn't exist
+
+        Returns:
+            Field value or default
+        """
+        try:
+            return self.__getitem__(key)
+        except KeyError:
+            return default
+
+    def pop(self, key: str, default=None):
+        """
+        Dict-like pop method - removes and returns field value.
+
+        CRITICAL FIX: Enables compute_loss() to use .pop() method.
+
+        NOTE: This implementation does NOT actually remove the field from the
+        dataclass (as dataclass fields are immutable), but instead sets the
+        field to None after retrieval. This is sufficient for HuggingFace
+        Trainer's compute_loss() pattern which extracts metadata once.
+
+        Args:
+            key: Field name
+            default: Default value if field doesn't exist
+
+        Returns:
+            Field value (before setting to None) or default
+        """
+        try:
+            value = self.__getitem__(key)
+            # Set field to None to simulate "removal"
+            # This prevents accidental reuse and signals the field was "popped"
+            if hasattr(self, key):
+                object.__setattr__(self, key, None)
+            return value
+        except KeyError:
+            return default
+
     def keys(self):
         """Return field names like a dict."""
         return [
