@@ -45,7 +45,7 @@ sys.path.insert(0, str(project_root))
 from dataset.umbrella_dataset_fixed import UMBRELLADataset
 from dataset.umbrella_collator import UMBRELLACollator, MemoryAwareUMBRELLACollator
 from training.umbrella_trainer import UMBRELLATrainer, UMBRELLATrainingArgs
-from training.umbrella_utils import PatchEmbed
+from model.patch_embed import PatchEmbed
 
 logger = logging.getLogger(__name__)
 
