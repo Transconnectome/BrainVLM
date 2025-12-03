@@ -1,61 +1,51 @@
 """
-UMBRELLA Integrated Training Script (FIXED VERSION)
+UMBRELLA Training Script with LLaVA-Next Format Support
 
-Complete training pipeline with:
-- Proper config loading from YAML
-- LLaVA-Next tokenization format
-- Variable-size image support (3D/4D)
-- Multi-turn conversation training
-- Correct import paths
-- **NEW**: Directory-based data loading support
-- **CRITICAL**: LlavaForConditionalGeneration with custom patch embedding
-- **CRITICAL**: Proper freezing strategy (only patch embedding trainable)
+This script implements complete UMBRELLA training pipeline with:
+- LLaVA-Next conversation format support
+- Custom 3D/4D brain MRI patch embedding
+- Multi-turn conversation masking
+- Directory-based dataset loading (multiple JSON files)
+- Task-aware loss computation
+- Memory-aware batching
 
-Key Updates:
-1. Load from umbrella_llava_train.yaml
-2. Support list-based image sizes from config
-3. Proper dataset initialization with config parameters
-4. Correct import paths for dataset and collator
-5. LLaVA-Next model integration
-6. **Directory and file-based data loading**
-7. Task filtering support
-8. **Custom PatchEmbed integration for brain MRI**
-9. **Freezing strategy: ONLY custom patch embedding is trainable**
+Key Features:
+1. LlavaForConditionalGeneration with custom PatchEmbed
+2. Multi-turn masking: human turns masked, assistant turns active
+3. Supports both file and directory inputs for train/eval data
+4. Task filtering for specific conversation types
+5. Memory-efficient training with gradient checkpointing
 
-Freezing Strategy:
-- Vision Encoder: FROZEN (encoder layers, pre_layernorm, post_layernorm)
-- Custom Patch Embedding: TRAINABLE (our custom 3D/4D MRI patch embedding)
-- Multi-Modal Projector: FROZEN (LLaVA's linear projection)
-- Language Model: FROZEN (entire language model + lm_head)
-
-This ensures only the brain MRI-specific patch embedding is trained while
-leveraging pre-trained vision and language components.
+Usage:
+    python main_umbrella_training_fixed.py \
+        --config umbrella_llava_train.yaml \
+        --train-data /path/to/train.json \
+        --eval-data /path/to/eval.json \
+        --modality T1
 """
 
-import torch
+import sys
 import logging
+import argparse
 import yaml
-from typing import Dict, List, Any, Optional, Tuple
+import torch
 from pathlib import Path
 from dataclasses import dataclass
-import argparse
-import sys
+from typing import Dict, List, Optional, Any, Tuple
 
 from transformers import (
     AutoTokenizer,
-    AutoProcessor,
-    LlavaForConditionalGeneration,
-    TrainingArguments,
-    # NOTE: Using custom UMBRELLATrainer instead of HuggingFace Trainer
-    # This is CRITICAL for the image_mask fix to work!
+    LlavaForConditionalGeneration
 )
 
-# Correct import paths
-sys.path.append(str(Path(__file__).parent.parent))
-from dataset.umbrella_dataset_fixed import UMBRELLADataset, create_umbrella_dataset_from_config
+# Import UMBRELLA components
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from dataset.umbrella_dataset_fixed import UMBRELLADataset
 from dataset.umbrella_collator import UMBRELLACollator, MemoryAwareUMBRELLACollator
-from model.patch_embed import PatchEmbed
 from training.umbrella_trainer import UMBRELLATrainer, UMBRELLATrainingArgs
+from training.umbrella_utils import PatchEmbed
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +68,10 @@ def load_config(config_path: str) -> Dict[str, Any]:
 @dataclass
 class UMBRELLATrainingConfig:
     """
-    Configuration for UMBRELLA training.
+    Unified configuration for UMBRELLA training.
+
+    This configuration class consolidates all training settings and provides
+    a factory method to convert to HuggingFace TrainingArguments.
 
     Loaded from YAML file or created programmatically.
     """
@@ -119,8 +112,17 @@ class UMBRELLATrainingConfig:
     gradient_checkpointing: bool = True
     mixed_precision: str = "bf16"  # or "fp16"
 
-    # Masking
-    mask_user_turns: bool = True
+    # Multi-turn masking
+    mask_human_turns: bool = True
+    mask_padding_tokens: bool = True
+
+    # Task-aware loss
+    enable_task_aware_loss: bool = True
+    task_type_weights: Optional[Dict[str, float]] = None
+
+    # Dummy loss support
+    enable_dummy_loss: bool = True
+    dummy_loss_weight: float = 0.1
 
     # Logging and saving
     output_dir: str = "./hf_results/umbrella"
@@ -129,6 +131,15 @@ class UMBRELLATrainingConfig:
     eval_steps: int = 500
     save_total_limit: int = 3
     warmup_steps: int = 500
+
+    # Advanced logging
+    log_turn_distribution: bool = True
+    log_image_statistics: bool = True
+    log_memory_usage: bool = False
+
+    # Gradient normalization
+    normalize_gradients_by_batch_size: bool = True
+    base_batch_size: int = 32
 
     # Weights & Biases
     use_wandb: bool = True
@@ -159,7 +170,7 @@ class UMBRELLATrainingConfig:
 
         # Get image size and patch size from config
         img_size = modality_dataset_config.get('img_size', [96, 96, 96])
-        patch_size = model_config.get(modality, {}).get('patch_size', [10, 10, 10])
+        patch_size = model_config.get(modality, {}).get('patch_size', [16, 16, 16])
 
         # Get T1 and rsfMRI settings for custom PatchEmbed
         T1_config = dataset_config.get('T1', {})
@@ -186,6 +197,60 @@ class UMBRELLATrainingConfig:
             warmup_steps=trainer_config.get('warmup_steps', 500),
             output_dir=trainer_config.get('ckpt_dir', './hf_results/umbrella'),
             wandb_api_key=yaml_config.get('wandb', {}).get('API_KEY')
+        )
+
+    def to_training_args(self, eval_dataset_available: bool = False) -> UMBRELLATrainingArgs:
+        """
+        Convert config to UMBRELLATrainingArgs for HuggingFace Trainer.
+
+        This factory method creates a properly configured UMBRELLATrainingArgs instance
+        from the high-level configuration, ensuring all UMBRELLA-specific attributes
+        are correctly set.
+
+        Args:
+            eval_dataset_available: Whether evaluation dataset is available
+
+        Returns:
+            UMBRELLATrainingArgs instance ready for UMBRELLATrainer
+        """
+        return UMBRELLATrainingArgs(
+            # Standard HuggingFace TrainingArguments
+            output_dir=self.output_dir,
+            num_train_epochs=self.num_epochs,
+            per_device_train_batch_size=self.batch_size,
+            per_device_eval_batch_size=self.batch_size,
+            gradient_accumulation_steps=self.gradient_accumulation_steps,
+            learning_rate=self.learning_rate,
+            warmup_steps=self.warmup_steps,
+            logging_steps=self.logging_steps,
+            eval_steps=self.eval_steps if eval_dataset_available else None,
+            save_steps=self.save_steps,
+            save_total_limit=self.save_total_limit,
+            fp16=self.mixed_precision == "fp16",
+            bf16=self.mixed_precision == "bf16",
+            save_strategy="steps",
+            evaluation_strategy="steps" if eval_dataset_available else "no",
+            logging_strategy="steps",
+            report_to="wandb" if self.use_wandb else "none",
+            load_best_model_at_end=eval_dataset_available,
+            metric_for_best_model="loss" if eval_dataset_available else None,
+            greater_is_better=False if eval_dataset_available else None,
+            gradient_checkpointing=self.gradient_checkpointing,
+
+            # UMBRELLA-specific arguments
+            mask_human_turns=self.mask_human_turns,
+            mask_padding_tokens=self.mask_padding_tokens,
+            enable_task_aware_loss=self.enable_task_aware_loss,
+            task_type_weights=self.task_type_weights,
+            enable_memory_aware_batching=self.enable_memory_aware_batching,
+            memory_budget_gb=self.memory_budget_gb,
+            enable_dummy_loss=self.enable_dummy_loss,
+            dummy_loss_weight=self.dummy_loss_weight,
+            log_turn_distribution=self.log_turn_distribution,
+            log_image_statistics=self.log_image_statistics,
+            log_memory_usage=self.log_memory_usage,
+            normalize_gradients_by_batch_size=self.normalize_gradients_by_batch_size,
+            base_batch_size=self.base_batch_size,
         )
 
 
@@ -247,131 +312,52 @@ def create_llava_model_with_custom_patch_embed(config: UMBRELLATrainingConfig) -
         T1_patch_size=config.T1_patch_size,
         rsfMRI_size=config.rsfMRI_img_size,
         rsfMRI_patch_size=config.rsfMRI_patch_size,
-        in_chans=1,  # Single channel for MRI
         embed_dim=embed_dim
     )
     logger.info("  Custom PatchEmbed created")
 
-    # Step 3: Replace original embeddings with custom patch embedding
-    logger.info("Replacing original patch embedding with custom PatchEmbed...")
-    setattr(model.vision_tower.vision_model, "embeddings", patch_embed)
-    logger.info("  Custom PatchEmbed integrated into model")
+    # Step 3: Replace patch embedding
+    logger.info("Replacing original patch_embedding with custom PatchEmbed...")
+    model.vision_tower.vision_model.embeddings.patch_embedding = patch_embed
+    logger.info("  Patch embedding replaced successfully")
 
     # Step 4: Apply freezing strategy
     logger.info("\n" + "=" * 80)
     logger.info("APPLYING FREEZING STRATEGY")
     logger.info("=" * 80)
 
-    # Count parameters before freezing
-    total_params_before = sum(p.numel() for p in model.parameters())
-    trainable_params_before = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # Freeze everything first
+    for param in model.parameters():
+        param.requires_grad = False
+    logger.info("1. Froze all model parameters")
 
-    logger.info(f"Before freezing:")
-    logger.info(f"  Total parameters: {total_params_before:,}")
-    logger.info(f"  Trainable parameters: {trainable_params_before:,}")
+    # Unfreeze ONLY custom patch embedding
+    for param in model.vision_tower.vision_model.embeddings.patch_embedding.parameters():
+        param.requires_grad = True
+    logger.info("2. Unfroze custom patch embedding (TRAINABLE)")
 
-    # Freeze vision encoder except embeddings
-    logger.info("\n1. Vision Encoder Freezing:")
-    vision_frozen_count = 0
-    vision_trainable_count = 0
-
-    for name, param in model.vision_tower.vision_model.named_parameters():
-        if 'encoder' in name:
-            param.requires_grad = False
-            vision_frozen_count += param.numel()
-        elif 'pre_layernorm' in name:
-            param.requires_grad = False
-            vision_frozen_count += param.numel()
-        elif 'post_layernorm' in name:
-            param.requires_grad = False
-            vision_frozen_count += param.numel()
-        elif 'embeddings' in name:
-            param.requires_grad = True
-            vision_trainable_count += param.numel()
-            logger.info(f"  TRAINABLE: {name} ({param.numel():,} params)")
-
-    logger.info(f"  Vision encoder frozen: {vision_frozen_count:,} parameters")
-    logger.info(f"  Custom embeddings trainable: {vision_trainable_count:,} parameters")
-
-    # Freeze multi-modal projector (LLaVA's linear projection)
-    logger.info("\n2. Multi-Modal Projector Freezing:")
-    projector_frozen_count = 0
-    for name, param in model.named_parameters():
-        if 'multi_modal_projector' in name:
-            param.requires_grad = False
-            projector_frozen_count += param.numel()
-            logger.info(f"  FROZEN: {name} ({param.numel():,} params)")
-
-    logger.info(f"  Multi-modal projector frozen: {projector_frozen_count:,} parameters")
-
-    # Freeze language model completely
-    logger.info("\n3. Language Model Freezing:")
-    lm_frozen_count = 0
-    for name, param in model.named_parameters():
-        if 'language_model' in name:
-            param.requires_grad = False
-            lm_frozen_count += param.numel()
-        elif 'lm_head' in name:
-            param.requires_grad = False
-            lm_frozen_count += param.numel()
-
-    logger.info(f"  Language model frozen: {lm_frozen_count:,} parameters")
-
-    # Step 5: Enable gradient checkpointing
-    if config.gradient_checkpointing:
-        logger.info("\n4. Gradient Checkpointing:")
-        model.gradient_checkpointing_enable()
-        logger.info("  Gradient checkpointing ENABLED")
-
-    # Final parameter count
-    total_params_after = sum(p.numel() for p in model.parameters())
-    trainable_params_after = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    frozen_params_after = total_params_after - trainable_params_after
+    # Count trainable parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params = total_params - trainable_params
 
     logger.info("\n" + "=" * 80)
-    logger.info("FREEZING SUMMARY")
+    logger.info("PARAMETER STATISTICS")
     logger.info("=" * 80)
-    logger.info(f"Total parameters: {total_params_after:,}")
-    logger.info(f"Trainable parameters: {trainable_params_after:,} ({100 * trainable_params_after / total_params_after:.2f}%)")
-    logger.info(f"Frozen parameters: {frozen_params_after:,} ({100 * frozen_params_after / total_params_after:.2f}%)")
-    logger.info("\nTrainable components:")
-    logger.info("  - Custom PatchEmbed (3D/4D brain MRI patch embedding)")
-    logger.info("\nFrozen components:")
-    logger.info("  - Vision encoder (encoder layers, layernorms)")
-    logger.info("  - Multi-modal projector (LLaVA projection)")
-    logger.info("  - Language model (entire LLM + lm_head)")
-    logger.info("=" * 80)
+    logger.info(f"Total parameters: {total_params:,}")
+    logger.info(f"Trainable parameters: {trainable_params:,}")
+    logger.info(f"Frozen parameters: {frozen_params:,}")
+    logger.info(f"Trainable percentage: {100.0 * trainable_params / total_params:.4f}%")
+    logger.info("=" * 80 + "\n")
 
-    # Validation: Ensure only embeddings are trainable
-    trainable_param_names = [name for name, param in model.named_parameters() if param.requires_grad]
-    logger.info("\nValidation - All trainable parameters:")
-    for name in trainable_param_names:
-        logger.info(f"  {name}")
+    # Step 5: Enable gradient checkpointing if configured
+    if config.gradient_checkpointing:
+        logger.info("Enabling gradient checkpointing for memory efficiency...")
+        model.gradient_checkpointing_enable()
+        logger.info("  Gradient checkpointing enabled")
 
-    # Safety check: Verify embeddings are trainable
-    embeddings_trainable = any('embeddings' in name for name in trainable_param_names)
-    if not embeddings_trainable:
-        logger.error("CRITICAL: Custom patch embedding is NOT trainable!")
-        raise RuntimeError("Custom patch embedding must be trainable but isn't. Check freezing logic.")
-
-    # Safety check: Verify other components are frozen
-    vision_encoder_frozen = all(
-        not param.requires_grad
-        for name, param in model.vision_tower.vision_model.named_parameters()
-        if 'encoder' in name or 'layernorm' in name
-    )
-    if not vision_encoder_frozen:
-        logger.warning("WARNING: Vision encoder has trainable parameters (expected frozen)")
-
-    lm_frozen = all(
-        not param.requires_grad
-        for name, param in model.named_parameters()
-        if 'language_model' in name or 'lm_head' in name
-    )
-    if not lm_frozen:
-        logger.warning("WARNING: Language model has trainable parameters (expected frozen)")
-
-    logger.info("\nModel initialization complete!")
+    logger.info("\n" + "=" * 80)
+    logger.info("MODEL INITIALIZATION COMPLETE")
     logger.info("=" * 80 + "\n")
 
     return model
@@ -386,7 +372,7 @@ class UMBRELLATrainingPipeline:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         logger.info("=" * 80)
-        logger.info("UMBRELLA Training Pipeline (FIXED VERSION - Directory Support)")
+        logger.info("UMBRELLA Training Pipeline (UNIFIED CONFIG VERSION)")
         logger.info("=" * 80)
         logger.info(f"Device: {self.device}")
         logger.info(f"Model: {config.model_name}")
@@ -535,32 +521,20 @@ class UMBRELLATrainingPipeline:
             # Create collator
             collator = self.create_collator(tokenizer)
 
-            # Setup training arguments
-            training_args = TrainingArguments(
-                output_dir=self.config.output_dir,
-                num_train_epochs=self.config.num_epochs,
-                per_device_train_batch_size=self.config.batch_size,
-                per_device_eval_batch_size=self.config.batch_size,
-                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-                learning_rate=self.config.learning_rate,
-                warmup_steps=self.config.warmup_steps,
-                logging_steps=self.config.logging_steps,
-                eval_steps=self.config.eval_steps if eval_dataset else None,
-                save_steps=self.config.save_steps,
-                save_total_limit=self.config.save_total_limit,
-                fp16=self.config.mixed_precision == "fp16",
-                bf16=self.config.mixed_precision == "bf16",
-                save_strategy="steps",
-                evaluation_strategy="steps" if eval_dataset else "no",
-                logging_strategy="steps",
-                report_to="wandb" if self.config.use_wandb else "none",
-                load_best_model_at_end=True if eval_dataset else False,
-                metric_for_best_model="loss" if eval_dataset else None,
-                greater_is_better=False if eval_dataset else None,
-            )
+            # Create training arguments using factory method
+            logger.info("\n" + "=" * 80)
+            logger.info("CREATING TRAINING ARGUMENTS (UNIFIED CONFIG)")
+            logger.info("=" * 80)
+            training_args = self.config.to_training_args(eval_dataset_available=(eval_dataset is not None))
+            logger.info("  Training arguments created successfully")
+            logger.info(f"  Type: {type(training_args).__name__}")
+            logger.info(f"  Has task_type_weights: {hasattr(training_args, 'task_type_weights')}")
+            logger.info(f"  Has enable_task_aware_loss: {hasattr(training_args, 'enable_task_aware_loss')}")
+            logger.info(f"  Has mask_human_turns: {hasattr(training_args, 'mask_human_turns')}")
+            logger.info("=" * 80 + "\n")
 
             # Create UMBRELLA trainer with custom compute_loss that removes image_mask
-            logger.info("Creating UMBRELLATrainer with image_mask handling...")
+            logger.info("Creating UMBRELLATrainer with unified config...")
             trainer = UMBRELLATrainer(
                 model=model,
                 args=training_args,
@@ -569,6 +543,7 @@ class UMBRELLATrainingPipeline:
                 data_collator=collator,
                 tokenizer=tokenizer,
             )
+            logger.info("  UMBRELLATrainer created successfully")
             logger.info("  Using custom UMBRELLATrainer.compute_loss() to remove image_mask before model forward")
 
             logger.info("\n" + "=" * 80)
@@ -597,7 +572,7 @@ class UMBRELLATrainingPipeline:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="UMBRELLA Training with LLaVA-Next Format and Directory Support"
+        description="UMBRELLA Training with LLaVA-Next Format and Unified Config"
     )
     parser.add_argument(
         '--config',
@@ -626,7 +601,7 @@ def main():
     parser.add_argument(
         '--task-filter',
         type=str,
-        help='Filter samples by task type (e.g., "same_sex_comparison", "different_sex_comparison")'
+        help='Filter for specific task type (e.g., same_sex_comparison)'
     )
     parser.add_argument(
         '--output-dir',
@@ -702,6 +677,9 @@ def main():
     logger.info(f"Batch size: {config.batch_size}")
     logger.info(f"Learning rate: {config.learning_rate}")
     logger.info(f"Output directory: {config.output_dir}")
+    logger.info(f"Task-aware loss: {config.enable_task_aware_loss}")
+    logger.info(f"Mask human turns: {config.mask_human_turns}")
+    logger.info(f"Memory-aware batching: {config.enable_memory_aware_batching}")
     logger.info("=" * 80 + "\n")
 
     # Create and run pipeline
