@@ -2,19 +2,21 @@
 UMBRELLA Dataset: Unified Multi-turn Brain Imaging Language Dataset (FIXED VERSION)
 
 CRITICAL UPDATES:
-1. **Directory-based loading**: Supports both single JSON file AND directories with multiple JSON files
-2. Proper LLaVA-Next tokenization format with <|im_start|> and <|im_end|>
-3. Correct role handling (user/assistant - no intermediate conversion)
-4. Variable image size support from config (lists)
-5. 3D/4D image handling for sMRI/fMRI
-6. Task filtering support (same_sex_comparison, different_sex_comparison, etc.)
+1. **JSONL format support**: Supports JSON, JSONL (newline-delimited JSON), and directories
+2. **Directory-based loading**: Supports both single JSON file AND directories with multiple JSON files
+3. Proper LLaVA-Next tokenization format with <|im_start|> and <|im_end|>
+4. Correct role handling (user/assistant - no intermediate conversion)
+5. Variable image size support from config (lists)
+6. 3D/4D image handling for sMRI/fMRI
+7. Task filtering support (same_sex_comparison, different_sex_comparison, etc.)
 
 Key Features:
 - JSON v2 format support (role: user/assistant, content: array)
+- JSONL format support (newline-delimited JSON for large datasets)
 - LLaVA-Next compatible prompt format
 - Multi-turn conversation with proper masking
 - Variable-size MRI image support
-- Directory and file-based data loading
+- Directory, file, and JSONL-based data loading
 """
 
 import os
@@ -64,7 +66,7 @@ class UMBRELLADataset(Dataset):
     Supports flexible multi-turn conversations with interleaved images and text.
     Each sample can have variable number of images, subjects, and modalities.
 
-    **NEW**: Supports both single JSON file and directory-based loading.
+    **NEW**: Supports JSON, JSONL (newline-delimited JSON), and directory-based loading.
 
     JSON Format (v2 - CURRENT STANDARD):
     {
@@ -93,6 +95,10 @@ class UMBRELLADataset(Dataset):
         "metadata": {"source": "ABCD", "age": 12, "sex": "male"}
     }
 
+    JSONL Format (Newline-Delimited JSON):
+    Each line is a complete JSON object (same structure as above).
+    Files must have .jsonl extension.
+
     LLaVA-Next Output Format:
     <|im_start|>user <image>
     Analyze this brain scan.<|im_end|><|im_start|>assistant
@@ -102,14 +108,17 @@ class UMBRELLADataset(Dataset):
     Option 1: Single JSON file
         data/train.json
 
-    Option 2: Directory with multiple JSON files
+    Option 2: Single JSONL file (recommended for large datasets)
+        data/train_conversations.jsonl
+
+    Option 3: Directory with multiple JSON files
         data/train/
             subject1_task1.json
             subject1_task2.json
             subject2_task1.json
             ...
 
-    Option 3: Nested directories with task types
+    Option 4: Nested directories with task types
         data/train/
             same_sex_comparison/
                 subject1.json
@@ -132,13 +141,13 @@ class UMBRELLADataset(Dataset):
                  image_base_dir: Optional[str] = None,
                  augment: bool = True,
                  use_dummy_loss: bool = False,
-                 modality: str = 'T1',
+                 modality: str = 'sMRI',
                  task_filter: Optional[str] = None):
         """
         Initialize UMBRELLA dataset.
 
         Args:
-            json_path: Path to JSON file OR directory containing JSON files
+            json_path: Path to JSON/JSONL file OR directory containing JSON files
             tokenizer: Text tokenizer (must support <|im_start|> and <|im_end|>)
             mode: 'train' or 'eval'
             img_size: Image spatial dimension (int or list [H, W, D] or [H, W, D, T])
@@ -147,7 +156,7 @@ class UMBRELLADataset(Dataset):
             image_base_dir: Base directory for relative image paths
             augment: Apply data augmentation (train only)
             use_dummy_loss: Support dummy loss for placeholder answers
-            modality: Primary modality ('T1' for sMRI, 'rsfMRI' for fMRI)
+            modality: Primary modality ('sMRI' for sMRI, 'rsfMRI' for fMRI)
             task_filter: Optional task type filter (e.g., 'same_sex_comparison')
         """
         self.json_path = json_path
@@ -173,7 +182,7 @@ class UMBRELLADataset(Dataset):
         # Determine if 4D (fMRI with temporal dimension)
         self.is_4d = len(self.img_size) == 4
 
-        # Load samples (supports both file and directory)
+        # Load samples (supports JSON, JSONL, and directories)
         self.samples = self._load_samples_smart(json_path)
 
         # Image transforms
@@ -191,10 +200,15 @@ class UMBRELLADataset(Dataset):
 
     def _load_samples_smart(self, path: str) -> List[UMBRELLASample]:
         """
-        Smart loading: automatically detect if path is file or directory.
+        Smart loading: automatically detect if path is file (JSON/JSONL) or directory.
+
+        Supported formats:
+        1. Single JSON file: Contains array of samples
+        2. Single JSONL file: Newline-delimited JSON (one sample per line)
+        3. Directory: Multiple JSON files (flat or nested)
 
         Args:
-            path: Path to JSON file or directory
+            path: Path to JSON/JSONL file or directory
 
         Returns:
             List of UMBRELLASample
@@ -205,9 +219,17 @@ class UMBRELLADataset(Dataset):
             raise FileNotFoundError(f"Path does not exist: {path}")
 
         if path_obj.is_file():
-            # Single JSON file
-            logger.info(f"Loading from single JSON file: {path}")
-            return self._load_samples_from_file(path)
+            # Check file extension
+            if path_obj.suffix == '.jsonl':
+                # JSONL file (newline-delimited JSON)
+                logger.info(f"Loading from JSONL file: {path}")
+                return self._load_samples_from_jsonl(path)
+            elif path_obj.suffix == '.json':
+                # Single JSON file
+                logger.info(f"Loading from single JSON file: {path}")
+                return self._load_samples_from_file(path)
+            else:
+                raise ValueError(f"Unsupported file format: {path_obj.suffix} (expected .json or .jsonl)")
 
         elif path_obj.is_dir():
             # Directory with JSON files
@@ -227,6 +249,74 @@ class UMBRELLADataset(Dataset):
 
         logger.info(f"  Found {len(data)} samples in file")
         return self._parse_samples(data)
+
+    def _load_samples_from_jsonl(self, jsonl_path: str) -> List[UMBRELLASample]:
+        """
+        Load samples from JSONL file (newline-delimited JSON).
+
+        Each line in the file is a complete JSON object representing one sample.
+
+        Args:
+            jsonl_path: Path to .jsonl file
+
+        Returns:
+            List of UMBRELLASample
+
+        Error Handling:
+        - Skips malformed lines with warning
+        - Logs line numbers of failed parses
+        - Continues processing valid lines
+        """
+        all_samples = []
+        failed_lines = []
+        line_count = 0
+
+        logger.info(f"  Reading JSONL file (newline-delimited JSON)...")
+
+        try:
+            with open(jsonl_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, start=1):
+                    line_count = line_num
+                    line = line.strip()
+
+                    # Skip empty lines
+                    if not line:
+                        continue
+
+                    try:
+                        # Parse JSON from this line
+                        item = json.loads(line)
+
+                        # Parse into UMBRELLASample
+                        samples = self._parse_samples([item])
+                        all_samples.extend(samples)
+
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"  Line {line_num}: Invalid JSON - {e}")
+                        failed_lines.append(line_num)
+                        continue
+
+                    except Exception as e:
+                        logger.error(f"  Line {line_num}: Failed to parse sample - {e}")
+                        failed_lines.append(line_num)
+                        continue
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"JSONL file not found: {jsonl_path}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to read JSONL file {jsonl_path}: {e}")
+
+        # Report statistics
+        logger.info(f"  Found {line_count} lines in JSONL file")
+        logger.info(f"  Successfully loaded {len(all_samples)} samples")
+
+        if failed_lines:
+            logger.warning(f"  Failed to parse {len(failed_lines)} lines: {failed_lines[:10]}...")
+
+        if len(all_samples) == 0:
+            raise ValueError(f"No valid samples found in JSONL file: {jsonl_path}")
+
+        return all_samples
 
     def _load_samples_from_directory(self, dir_path: str) -> List[UMBRELLASample]:
         """
@@ -657,21 +747,13 @@ class UMBRELLADataset(Dataset):
         """
         sample = self.samples[index]
 
+        assert len(sample.image_paths) == self.max_images, NotImplementedError("The toal number of images should be the same per each conversation")
+
         # Load images
         images = []
         for img_path in sample.image_paths[:self.max_images]:
             img = self._load_image(img_path)
             images.append(img)
-
-        # Pad to max_images if needed (for consistent batching)
-        while len(images) < self.max_images:
-            if images:
-                images.append(torch.zeros_like(images[0]))
-            else:
-                if self.is_4d:
-                    images.append(torch.zeros(1, *self.img_size))
-                else:
-                    images.append(torch.zeros(1, *self.img_size))
 
         # Stack images
         if images:
@@ -710,7 +792,7 @@ def create_umbrella_dataset_from_config(
     json_path: str,
     tokenizer,
     mode: str = 'train',
-    modality: str = 'T1',
+    modality: str = 'sMRI',
     task_filter: Optional[str] = None
 ) -> UMBRELLADataset:
     """
@@ -718,10 +800,10 @@ def create_umbrella_dataset_from_config(
 
     Args:
         config: Configuration dict from YAML
-        json_path: Path to JSON file OR directory
+        json_path: Path to JSON/JSONL file OR directory
         tokenizer: Text tokenizer
         mode: 'train' or 'eval'
-        modality: Modality name (T1, rsfMRI, etc.)
+        modality: Modality name (sMRI, rsfMRI, etc.)
         task_filter: Optional task type filter
 
     Returns:
@@ -750,12 +832,15 @@ if __name__ == "__main__":
     # Test with sample config
     test_config = {
         'dataset': {
-            'T1': {'img_size': [120, 120, 120]},
+            'sMRI': {'img_size': [120, 120, 120]},
             'rsfMRI': {'img_size': [96, 96, 96, 24]}
         }
     }
 
     print("Config test:")
-    print(f"  T1 img_size: {test_config['dataset']['T1']['img_size']}")
+    print(f"  sMRI img_size: {test_config['dataset']['sMRI']['img_size']}")
     print(f"  rsfMRI img_size: {test_config['dataset']['rsfMRI']['img_size']}")
-    print("\nDataset can be initialized with list-based image sizes and directory loading")
+    print("\nDataset supports:")
+    print("  - JSON format (single file with array)")
+    print("  - JSONL format (newline-delimited JSON)")
+    print("  - Directory loading (multiple JSON files)")
