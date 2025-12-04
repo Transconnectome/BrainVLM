@@ -23,13 +23,17 @@ warnings.filterwarnings('ignore')
 
 # Configuration
 METADATA_PATH = "ABCD_phenotype_total.csv"
-OUTPUT_DIR = Path("sex_comparison_splits")
+OUTPUT_DIR = Path("sex_comparison_splits_extended")
 RANDOM_SEED = 42
 
 # Dataset sizes (balanced 50M/50F per split)
 TRAIN_SIZE = 100  # 50 males + 50 females
 VAL_SIZE = 100    # 50 males + 50 females
 TEST_SIZE = 100   # 50 males + 50 females
+
+# Pairing configuration (iterative selection)
+N_SAME_SEX_PAIRS = 5     # Number of same-sex comparison pairs per subject
+N_DIFF_SEX_PAIRS = 5     # Number of different-sex comparison pairs per subject
 
 # Image path template
 IMAGE_DIR = "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256"
@@ -185,18 +189,24 @@ def save_splits(splits, output_dir):
     return output_dir
 
 
-def create_pairing_metadata(splits, output_dir):
+def create_pairing_metadata(splits, output_dir, n_same_sex_pairs=3, n_diff_sex_pairs=3):
     """
-    Create pairing metadata for comparison-based learning.
+    Create pairing metadata for comparison-based learning with iterative selection.
 
-    For each subject, we'll create pairs with:
-    - 1 reference subject of same sex
-    - 1 reference subject of different sex
+    For each subject, we'll create multiple pairs with:
+    - n_same_sex_pairs reference subjects of same sex (iteratively selected)
+    - n_diff_sex_pairs reference subjects of different sex (iteratively selected)
 
-    This enables both within-sex and between-sex comparisons.
+    Key constraint: Never select the same subject for comparison (subject_id != reference_id)
+
+    Args:
+        splits: Dictionary of train/val/test DataFrames
+        output_dir: Output directory path
+        n_same_sex_pairs: Number of same-sex comparison pairs per subject
+        n_diff_sex_pairs: Number of different-sex comparison pairs per subject
     """
     print(f"\n" + "="*60)
-    print("CREATING PAIRING METADATA")
+    print("CREATING PAIRING METADATA (ITERATIVE SELECTION)")
     print("="*60)
 
     for split_name, df in splits.items():
@@ -210,32 +220,50 @@ def create_pairing_metadata(splits, output_dir):
             subject_id = row['subject_id']
             sex = row['sex']
 
-            # Create same-sex comparison
+            # === SAME-SEX COMPARISON PAIRS ===
+            # Build pool excluding subject itself
             same_sex_pool = males if sex == 1 else females
             same_sex_pool = [s for s in same_sex_pool if s != subject_id]
-            if same_sex_pool:
-                same_sex_ref = np.random.choice(same_sex_pool)
-                pairs.append({
-                    'subject_id': subject_id,
-                    'sex': sex,
-                    'reference_id': same_sex_ref,
-                    'reference_sex': sex,
-                    'comparison_type': 'same_sex',
-                    'split': split_name
-                })
 
-            # Create different-sex comparison
+            # Iteratively select n_same_sex_pairs (cycling through pool if needed)
+            if same_sex_pool:
+                # Use cycling to ensure we get diverse selections even with small pools
+                same_sex_pool_cycling = (same_sex_pool * ((n_same_sex_pairs // len(same_sex_pool)) + 1))
+                np.random.shuffle(same_sex_pool_cycling)
+
+                for pair_idx in range(min(n_same_sex_pairs, len(set(same_sex_pool)))):
+                    same_sex_ref = same_sex_pool_cycling[pair_idx]
+                    pairs.append({
+                        'subject_id': subject_id,
+                        'sex': sex,
+                        'reference_id': same_sex_ref,
+                        'reference_sex': sex,
+                        'comparison_type': 'same_sex',
+                        'pair_index': pair_idx,
+                        'split': split_name
+                    })
+
+            # === DIFFERENT-SEX COMPARISON PAIRS ===
+            # Build pool of opposite sex subjects
             diff_sex_pool = females if sex == 1 else males
+
+            # Iteratively select n_diff_sex_pairs (cycling through pool if needed)
             if diff_sex_pool:
-                diff_sex_ref = np.random.choice(diff_sex_pool)
-                pairs.append({
-                    'subject_id': subject_id,
-                    'sex': sex,
-                    'reference_id': diff_sex_ref,
-                    'reference_sex': 2 if sex == 1 else 1,
-                    'comparison_type': 'different_sex',
-                    'split': split_name
-                })
+                # Use cycling to ensure we get diverse selections even with small pools
+                diff_sex_pool_cycling = (diff_sex_pool * ((n_diff_sex_pairs // len(diff_sex_pool)) + 1))
+                np.random.shuffle(diff_sex_pool_cycling)
+
+                for pair_idx in range(min(n_diff_sex_pairs, len(diff_sex_pool))):
+                    diff_sex_ref = diff_sex_pool_cycling[pair_idx]
+                    pairs.append({
+                        'subject_id': subject_id,
+                        'sex': sex,
+                        'reference_id': diff_sex_ref,
+                        'reference_sex': 2 if sex == 1 else 1,
+                        'comparison_type': 'different_sex',
+                        'pair_index': pair_idx,
+                        'split': split_name
+                    })
 
         # Save pairing metadata
         pairs_df = pd.DataFrame(pairs)
@@ -244,9 +272,11 @@ def create_pairing_metadata(splits, output_dir):
         print(f"  {split_name}: {pairs_path} ({len(pairs_df)} pairs)")
 
     print("\nPairing strategy:")
-    print("  - Each subject has 1 same-sex comparison")
-    print("  - Each subject has 1 different-sex comparison")
-    print("  - This enables both within-sex and between-sex learning")
+    print(f"  - Each subject has {n_same_sex_pairs} same-sex comparison pairs (iterative selection)")
+    print(f"  - Each subject has {n_diff_sex_pairs} different-sex comparison pairs (iterative selection)")
+    print("  - CONSTRAINT: Same subject never paired with itself (subject_id != reference_id)")
+    print("  - STRATEGY: Iterative pool cycling ensures diverse reference selection")
+    print("  - This enables rich within-sex and between-sex comparative learning")
 
 
 def main():
@@ -273,8 +303,13 @@ def main():
     # Save splits
     output_dir = save_splits(splits, OUTPUT_DIR)
 
-    # Create pairing metadata
-    create_pairing_metadata(splits, output_dir)
+    # Create pairing metadata with iterative selection
+    create_pairing_metadata(
+        splits,
+        output_dir,
+        n_same_sex_pairs=N_SAME_SEX_PAIRS,
+        n_diff_sex_pairs=N_DIFF_SEX_PAIRS
+    )
 
     # Final summary
     print("\n" + "="*60)
@@ -285,6 +320,10 @@ def main():
     print(f"  Train: {TRAIN_SIZE} (50M/50F)")
     print(f"  Validation: {VAL_SIZE} (50M/50F)")
     print(f"  Test: {TEST_SIZE} (50M/50F)")
+    print(f"\nComparison pairs per subject:")
+    print(f"  Same-sex pairs: {N_SAME_SEX_PAIRS} (iterative selection)")
+    print(f"  Different-sex pairs: {N_DIFF_SEX_PAIRS} (iterative selection)")
+    print(f"  Total pairs per subject: {N_SAME_SEX_PAIRS + N_DIFF_SEX_PAIRS}")
     print(f"\nRandom seed: {RANDOM_SEED}")
     print(f"Image directory: {IMAGE_DIR}")
     print(f"Image format: {IMAGE_TEMPLATE}")
