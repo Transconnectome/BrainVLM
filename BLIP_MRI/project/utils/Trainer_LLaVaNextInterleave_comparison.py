@@ -148,7 +148,7 @@ def compute_metrics_with_tokenizer(tokenizer, targets):
             for pred in decoded_preds:
                 pred_clean = pred.strip()
                 # Extract first number
-                match = re.search(r'(\d+\.?\d*)', pred_clean)
+                match = re.search(r'(-?\d+\.?\d*)', pred_clean)
                 if match:
                     pred_values.append(float(match.group(1)))
                 else:
@@ -156,7 +156,7 @@ def compute_metrics_with_tokenizer(tokenizer, targets):
 
             for label in decoded_labels:
                 label_clean = label.strip()
-                match = re.search(r'(\d+\.?\d*)', label_clean)
+                match = re.search(r'(-?\d+\.?\d*)', pred_clean)
                 if match:
                     true_values.append(float(match.group(1)))
                 else:
@@ -207,8 +207,8 @@ def compute_metrics_with_tokenizer(tokenizer, targets):
                 # Pattern 3: just the label itself (e.g., "control", "patient")
                 else:
                     words = label_clean.split()
-                    if len(words) > 0:
-                        all_labels.add(words[-1])  # Take last word as label
+                    if len(words) == 1:  # Only single word
+                        all_labels.add(words[0]) 
 
             # Create label to idx mapping
             label_to_idx = {label: idx for idx, label in enumerate(sorted(all_labels))}
@@ -822,7 +822,7 @@ class CustomTrainer(Trainer):
                 generated_ids = actual_model.generate(
                     pixel_values=pixel_values_sample,  # Use prepared pixel_values
                     input_ids=prompt_ids,
-                    max_new_tokens=250,
+                    max_new_tokens=150,
                     do_sample=False,
                     temperature=0.1,
                     pad_token_id=self.tokenizer.pad_token_id,

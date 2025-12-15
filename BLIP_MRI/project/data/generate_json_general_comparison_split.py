@@ -18,7 +18,7 @@ import numpy as np
 from pathlib import Path
 import random
 
-def load_subjects_and_images(meta_path, img_dir, subject_id_col, target_col, study_sample='ABCD'):
+def load_subjects_and_images(meta_path, img_dir, subject_id_col, target_col, study_sample='ABCD', max_subjects=None):
     """Load metadata and available images"""
 
     # Load metadata
@@ -53,6 +53,20 @@ def load_subjects_and_images(meta_path, img_dir, subject_id_col, target_col, stu
 
     # Filter subjects with both metadata and images
     meta = meta[meta[subject_id_col].isin(image_dict.keys())].reset_index(drop=True)
+
+    # Limit number of subjects if specified
+    if max_subjects is not None and len(meta) > max_subjects:
+        print(f"Limiting to {max_subjects} subjects (from {len(meta)})")
+        # Stratified sampling to maintain class balance
+        if pd.api.types.is_numeric_dtype(meta[target_col]) and meta[target_col].nunique() <= 10:
+            # Categorical: stratified by class
+            samples_per_class = max_subjects // meta[target_col].nunique()
+            meta = meta.groupby(target_col, group_keys=False).apply(
+                lambda x: x.sample(min(len(x), samples_per_class), random_state=1234)
+            ).reset_index(drop=True)
+        else:
+            # Numerical or large categorical: random sample
+            meta = meta.sample(n=max_subjects, random_state=1234).reset_index(drop=True)
 
     # Remap sex values to 0/1 if target_col is 'sex'
     if 'sex' in target_col.lower():
@@ -739,6 +753,7 @@ def main():
                         help='Validation set ratio')
     parser.add_argument('--seed', type=int, default=1234,
                         help='Random seed')
+    parser.add_argument('--max_subjects', type=int, default=None, help='Maximum number of subjects to use (for quick testing)')
 
     args = parser.parse_args()
 
@@ -772,7 +787,7 @@ def main():
     # Load data
     print("\n[Step 1] Loading subjects and images...")
     meta, image_dict = load_subjects_and_images(
-        args.meta_path, args.img_dir, args.subject_id_col, args.target_col, args.study_sample
+        args.meta_path, args.img_dir, args.subject_id_col, args.target_col, args.study_sample, args.max_subjects
     )
     print(f"Loaded {len(meta)} subjects with images")
 
@@ -868,9 +883,9 @@ def main():
     with open(test_path, 'w') as f:
         json.dump(test_tasks, f, indent=2)
 
-    print(f"\n✓ Saved: {train_path}")
-    print(f"✓ Saved: {val_path}")
-    print(f"✓ Saved: {test_path}")
+    print(f"\nSaved: {train_path}")
+    print(f"Saved: {val_path}")
+    print(f"Saved: {test_path}")
 
     # Summary
     print("\n" + "=" * 70)

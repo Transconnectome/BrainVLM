@@ -128,6 +128,85 @@ class MultiTurnComparisonDataset(Dataset, Randomizable):
             full_text += "<|im_end|>\n"
 
         return full_text
+    
+
+    # def __preprocess_as_hf__(self, images, full_text):
+    #     """
+    #     Tokenize multi-turn conversation and apply instruction masking
+
+    #     Args:
+    #         images: List of [ref_image_tensor, query_image_tensor]
+    #         full_text: Complete conversation text
+
+    #     Returns:
+    #         Dictionary with pixel_values, input_ids, attention_mask, labels
+    #     """
+    #     inputs = {}
+    #     inputs['pixel_values'] = {}
+    #     inputs['input_ids'] = {}
+    #     inputs['attention_mask'] = {}
+    #     inputs['labels'] = {}
+
+    #     # ========== 핵심 수정! ==========
+    #     # 두 이미지를 개별적으로 batch 차원 추가한 후 합치기
+    #     # ref_image: [C, H, W, D] → [1, C, H, W, D]
+    #     # query_image: [C, H, W, D] → [1, C, H, W, D]
+    #     # 합치기: [2, C, H, W, D] → 이제 PatchEmbed가 batch=2로 처리
+
+    #     processed_images = []
+    #     for img in images:
+    #         # Add batch dimension to each image
+    #         processed_images.append(img.unsqueeze(0))  # [1, C, H, W, D]
+
+    #     # Concatenate along batch dimension
+    #     batched_images = torch.cat(processed_images, dim=0)  # [2, C, H, W, D]
+
+    #     inputs['pixel_values']['T1'] = batched_images
+    #     # ==================================
+
+    #     # Tokenize full conversation
+    #     full_encoding = self.tokenizer(
+    #         full_text,
+    #         add_special_tokens=True,
+    #         padding='max_length',
+    #         max_length=512,
+    #         truncation=True,
+    #         return_tensors='pt'
+    #     )
+
+    #     input_ids = full_encoding['input_ids'].squeeze(0)
+    #     attention_mask = full_encoding['attention_mask'].squeeze(0)
+
+    #     # Initialize labels
+    #     labels = input_ids.clone()
+    #     labels[attention_mask == 0] = -100  # Mask padding
+
+    #     # Apply instruction masking: mask everything except the LAST assistant's response
+    #     # We want to train only on the final answer, not on the intermediate "Understood" response
+
+    #     # Find all assistant tokens
+    #     assistant_pattern = "<|im_start|>assistant\n"
+    #     assistant_tokens = self.tokenizer.encode(assistant_pattern, add_special_tokens=False)
+    #     assistant_tensor = torch.tensor(assistant_tokens, device=input_ids.device)
+
+    #     assistant_positions = []
+    #     for i in range(len(input_ids) - len(assistant_tokens) + 1):
+    #         if torch.equal(input_ids[i:i+len(assistant_tokens)], assistant_tensor):
+    #             assistant_positions.append(i + len(assistant_tokens))
+
+    #     if len(assistant_positions) >= 2:
+    #         # Mask everything before the LAST assistant response
+    #         last_assistant_pos = assistant_positions[-1]
+    #         labels[:last_assistant_pos] = -100
+    #     elif len(assistant_positions) == 1:
+    #         # Only one assistant response (shouldn't happen in 2-turn, but handle it)
+    #         labels[:assistant_positions[0]] = -100
+
+    #     inputs['input_ids']['T1'] = input_ids
+    #     inputs['attention_mask']['T1'] = attention_mask
+    #     inputs['labels']['T1'] = labels
+
+    #     return inputs
 
     def __preprocess_as_hf__(self, images, full_text):
         """
@@ -146,22 +225,19 @@ class MultiTurnComparisonDataset(Dataset, Randomizable):
         inputs['attention_mask'] = {}
         inputs['labels'] = {}
 
-        # ========== 핵심 수정! ==========
-        # 두 이미지를 개별적으로 batch 차원 추가한 후 합치기
-        # ref_image: [C, H, W, D] → [1, C, H, W, D]
-        # query_image: [C, H, W, D] → [1, C, H, W, D]
-        # 합치기: [2, C, H, W, D] → 이제 PatchEmbed가 batch=2로 처리
+        # Process multiple images for interleave-style multi-image handling
+        # Each image: [C, H, W, D] = [1, 120, 120, 120]
+        # Stack along batch dimension: [num_images, C, H, W, D]
+        # Examples:
+        #   - 2 images (1 ref + 1 query): [2, 1, 120, 120, 120]
+        #   - 4 images (3 refs + 1 query): [4, 1, 120, 120, 120]
+        #
+        # This allows PatchEmbedInterleave to process each image independently
+        # The batch dimension here represents multiple images, NOT multiple samples
+        # Each will be independently processed through vision encoder
+        stacked_images = torch.stack(images)  # [num_images, 1, 120, 120, 120]
 
-        processed_images = []
-        for img in images:
-            # Add batch dimension to each image
-            processed_images.append(img.unsqueeze(0))  # [1, C, H, W, D]
-
-        # Concatenate along batch dimension
-        batched_images = torch.cat(processed_images, dim=0)  # [2, C, H, W, D]
-
-        inputs['pixel_values']['T1'] = batched_images
-        # ==================================
+        inputs['pixel_values']['T1'] = stacked_images
 
         # Tokenize full conversation
         full_encoding = self.tokenizer(
@@ -183,7 +259,7 @@ class MultiTurnComparisonDataset(Dataset, Randomizable):
         # Apply instruction masking: mask everything except the LAST assistant's response
         # We want to train only on the final answer, not on the intermediate "Understood" response
 
-        # Find all assistant tokens
+        # Find all assistant start tokens
         assistant_pattern = "<|im_start|>assistant\n"
         assistant_tokens = self.tokenizer.encode(assistant_pattern, add_special_tokens=False)
         assistant_tensor = torch.tensor(assistant_tokens, device=input_ids.device)
@@ -194,9 +270,26 @@ class MultiTurnComparisonDataset(Dataset, Randomizable):
                 assistant_positions.append(i + len(assistant_tokens))
 
         if len(assistant_positions) >= 2:
-            # Mask everything before the LAST assistant response
+            # Mask everything before the LAST assistant response (including intermediate assistants)
+            # This includes: all user turns, all previous assistant responses
             last_assistant_pos = assistant_positions[-1]
             labels[:last_assistant_pos] = -100
+
+            # Additionally mask all PREVIOUS assistant responses (between first and last)
+            # Find <|im_end|> tokens to identify where each assistant response ends
+            im_end_pattern = "<|im_end|>\n"
+            im_end_tokens = self.tokenizer.encode(im_end_pattern, add_special_tokens=False)
+            im_end_tensor = torch.tensor(im_end_tokens, device=input_ids.device)
+
+            # Mask intermediate assistant responses (between positions[0] and positions[-1])
+            for assistant_start in assistant_positions[:-1]:  # All except last
+                # Find the next <|im_end|> after this assistant start
+                for j in range(assistant_start, last_assistant_pos):
+                    if j + len(im_end_tokens) <= len(input_ids):
+                        if torch.equal(input_ids[j:j+len(im_end_tokens)], im_end_tensor):
+                            # Mask from assistant_start to end of <|im_end|>
+                            labels[assistant_start:j+len(im_end_tokens)] = -100
+                            break
         elif len(assistant_positions) == 1:
             # Only one assistant response (shouldn't happen in 2-turn, but handle it)
             labels[:assistant_positions[0]] = -100
@@ -206,8 +299,7 @@ class MultiTurnComparisonDataset(Dataset, Randomizable):
         inputs['labels']['T1'] = labels
 
         return inputs
-
-
+        
     def __len__(self) -> int:
         return len(self.tasks)
 
