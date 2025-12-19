@@ -26,10 +26,10 @@ export TORCH_HOME=/pscratch/sd/h/heehaw/   #TODO: Change to your own scratch spa
 # #recent version (24.3.30)
 python project/training/run_inference_umbrella.py \
     --config_path /pscratch/sd/h/heehaw/BrainVLM/UMBRELLA_gemini/project/config/umbrella_llava_train.yaml \
-    --model_path /pscratch/sd/h/heehaw/BrainVLM/UMBRELLA_gemini/hf_results/umbrella_SexComparison_100subjects_40samples/checkpoint-800 \
-    --data_path /pscratch/sd/h/heehaw/BrainVLM/UMBRELLA_gemini/sample_data/sex_comparison_conversations_simple_100subjects_40samples/test_conversations.jsonl \
+    --model_path /pscratch/sd/h/heehaw/BrainVLM/UMBRELLA_gemini/hf_results/umbrella_SexMixed_100subjects_20samples/checkpoint-500 \
+    --data_path ./sample_data/sex_comparison_conversations_mixed_100subjects_20samples/test_conversations.jsonl \
     --modality sMRI \
-    --output_file /pscratch/sd/h/heehaw/BrainVLM/UMBRELLA_gemini/eval_predictions_SexComparison_100subjects_40samples/prediction_results_ckpt800.jsonl
+    --output_file /pscratch/sd/h/heehaw/BrainVLM/UMBRELLA_gemini/eval_predictions_SexMixed_100subjects_20samples/comparison_prediction_results_ckpt400.jsonl
 
 
 # --limit_training_samples 1000
