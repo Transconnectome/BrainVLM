@@ -232,13 +232,25 @@ class UMBRELLATrainingPipeline:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         tokenizer.padding_side = "left" # Crucial for generation
 
-        # Add special tokens
-        special_tokens = {'additional_special_tokens': ['<|im_start|>', '<|im_end|>', '<image>']}
-        tokenizer.add_special_tokens(special_tokens)
-
         # Load Model
         model = create_llava_model_with_custom_patch_embed(self.config)
-        model.resize_token_embeddings(len(tokenizer))
+
+
+        # Add special tokens if needed 
+        # 필요한 특수 토큰 목록
+        tokens_to_add = ['<|im_start|>', '<|im_end|>', '<image>']
+        missing_tokens = [t for t in tokens_to_add if t not in tokenizer.get_vocab()]
+
+        # 없는 토큰만 추가
+        if missing_tokens:
+            print(f"Adding missing tokens: {missing_tokens}")
+            tokenizer.add_special_tokens({'additional_special_tokens': missing_tokens})
+            
+            # [중요] 토큰을 새로 추가했을 때만 임베딩 크기를 조절해야 함
+            model.resize_token_embeddings(len(tokenizer))
+        else:
+            print("All special tokens already exist. Skipping add_special_tokens.")
+                
         
         return model, tokenizer
 
@@ -313,6 +325,7 @@ def main():
     parser.add_argument('--modality', type=str, default='sMRI')
     parser.add_argument('--task-filter', type=str)
     parser.add_argument('--output-dir', type=str)
+    parser.add_argument('--eval-output-dir', type=str)
     parser.add_argument('--batch-size', type=int)
     parser.add_argument('--learning-rate', type=float)
     parser.add_argument('--no-wandb', action='store_true')
@@ -332,6 +345,7 @@ def main():
     if args.output_dir: config.output_dir = args.output_dir
     if args.batch_size: config.batch_size = args.batch_size
     if args.learning_rate: config.learning_rate = args.learning_rate
+    if args.eval_output_dir: config.eval_output_dir = args.eval_output_dir
     if args.no_wandb: config.use_wandb = False
 
     # Create output dir

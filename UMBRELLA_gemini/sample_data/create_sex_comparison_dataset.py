@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 
 # Configuration
 METADATA_PATH = "ABCD_phenotype_total.csv"
-OUTPUT_DIR = Path("sex_comparison_splits_extended_5samples")
+OUTPUT_DIR = Path("sex_comparison_splits_100subjects_40samples")
 RANDOM_SEED = 42
 
 # Dataset sizes (balanced 50M/50F per split)
@@ -36,16 +36,16 @@ TEST_SIZE = 100   # 50 males + 50 females
 # Each split can have independent control over comparison pair counts
 SPLIT_CONFIG = {
     'train': {
-        'n_same_sex_pairs': 5,    # Number of same-sex comparison pairs per subject
-        'n_diff_sex_pairs': 5,    # Number of different-sex comparison pairs per subject
+        'n_same_sex_pairs': 40,    # Number of same-sex comparison pairs per subject
+        'n_diff_sex_pairs': 40,    # Number of different-sex comparison pairs per subject
     },
     'validation': {
-        'n_same_sex_pairs': 2,
-        'n_diff_sex_pairs': 2,
+        'n_same_sex_pairs': 3,
+        'n_diff_sex_pairs': 3,
     },
     'test': {
-        'n_same_sex_pairs': 2,
-        'n_diff_sex_pairs': 2,
+        'n_same_sex_pairs': 5,
+        'n_diff_sex_pairs': 5,
     }
 }
 

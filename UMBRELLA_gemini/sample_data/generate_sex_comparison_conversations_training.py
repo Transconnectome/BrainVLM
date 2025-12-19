@@ -33,8 +33,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Configuration
-SPLITS_DIR = Path("sex_comparison_splits_extended_5samples")
-OUTPUT_DIR = Path("sex_comparison_conversations_simple_extended_5samples")
+SPLITS_DIR = Path("sex_comparison_splits_100subjects_20samples")
+OUTPUT_DIR = Path("sex_comparison_conversations_mixed_100subjects_20samples")
 IMAGE_DIR = "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256"
 IMAGE_TEMPLATE = "{subject_id}.nii.gz"
 
@@ -48,40 +48,48 @@ MODALITY = "sMRI"  # Structural MRI
 
 # Prompt templates for comparison-based learning
 PROMPTS = {
-    'reference_male': [
-        "This is a T1-weighted structural MRI scan from a male subject (reference). Please analyze this brain scan carefully.",
-        "Here is a T1-weighted brain MRI from a male participant. This will serve as your reference scan.",
-        "Examine this structural brain MRI from a male subject. Pay attention to key anatomical features.",
-    ],
-    'reference_female': [
-        "This is a T1-weighted structural MRI scan from a female subject (reference). Please analyze this brain scan carefully.",
-        "Here is a T1-weighted brain MRI from a female participant. This will serve as your reference scan.",
-        "Examine this structural brain MRI from a female subject. Pay attention to key anatomical features.",
-    ],
-    
+    #'reference_male': [
+    #    "This is a T1-weighted structural MRI scan from a male subject (reference). Please analyze this brain scan carefully.",
+    #    "Here is a T1-weighted brain MRI from a male participant. This will serve as your reference scan.",
+    #    "Examine this structural brain MRI from a male subject. Pay attention to key anatomical features.",
+    #],
+    #'reference_female': [
+    #    "This is a T1-weighted structural MRI scan from a female subject (reference). Please analyze this brain scan carefully.",
+    #    "Here is a T1-weighted brain MRI from a female participant. This will serve as your reference scan.",
+    #    "Examine this structural brain MRI from a female subject. Pay attention to key anatomical features.",
+    #],
+
     #'acknowledgment_male': [
-    #    "I've examined the male reference scan. Ready for comparison.",
-    #    "Analyzed. I've noted the structural features of this male brain scan.",
     #    "Understood. I've analyzed the reference male brain scan.",
     #],
     #'acknowledgment_female': [
-    #    "I've examined the female reference scan. Ready for comparison.",
-    #    "Analyzed. I've noted the structural features of this female brain scan.",
     #    "Understood. I've analyzed the reference female brain scan.",
     #],
 
+    #'comparison_task': [
+    #    "Analyze this scan relative to the reference. Classify the biological sex and explain key differences.",
+    #    "Compare this brain scan with the reference. What is the likely biological sex of this subject?",
+    #    "Now analyze this T1-weighted MRI by comparing it with the reference scan. Estimate the biological sex of this subject.",
+    #],
+
+    'reference_male': [
+        "Analyze this T1-weighted brain MRI scan (reference). Estimate the biological sex of the subject.",
+    ],
+    'reference_female': [
+        "Analyze this T1-weighted brain MRI scan (reference). Estimate the biological sex of the subject.",
+    ],
+
     'acknowledgment_male': [
-        "Understood. I've analyzed the reference male brain scan.",
+        "male.",
     ],
     'acknowledgment_female': [
-        "Understood. I've analyzed the reference female brain scan.",
+        "female.",
     ],
 
     'comparison_task': [
-        "Analyze this scan relative to the reference. Classify the biological sex and explain key differences.",
-        "Compare this brain scan with the reference. What is the likely biological sex of this subject?",
         "Now analyze this T1-weighted MRI by comparing it with the reference scan. Estimate the biological sex of this subject.",
     ],
+
     'response_male_correct': [
         "male.",
     ],
