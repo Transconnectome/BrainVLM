@@ -1,0 +1,80 @@
+{
+  "task_id": "NDARINVB4CA1YNH_different_sex_comparison",
+  "task_type": "T3",
+  "subject_ids": [
+    "NDARINVNE5HMEV6",
+    "NDARINVB4CA1YNH"
+  ],
+  "modalities": [
+    "sMRI",
+    "sMRI"
+  ],
+  "images": [
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVNE5HMEV6.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    },
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVB4CA1YNH.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    }
+  ],
+  "conversations": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Examine this structural brain MRI from a male subject. Pay attention to key anatomical features."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVNE5HMEV6.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I've examined the male reference scan. Ready for comparison."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Compare this brain scan with the reference. What is the likely biological sex of this subject?"
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVB4CA1YNH.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "This scan likely belongs to a female subject. Unlike the reference male scan, this shows structural characteristics typical of female neuroanatomy."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "subject_id": "NDARINVB4CA1YNH",
+    "subject_label": "female",
+    "reference_id": "NDARINVNE5HMEV6",
+    "reference_label": "male",
+    "comparison_type": "different",
+    "task": "sex_classification_via_comparison"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "task_id": "NDARINV00CY2MDM_different_sex_comparison",
+  "task_type": "T3",
+  "subject_ids": [
+    "NDARINV01GPLNXC",
+    "NDARINV00CY2MDM"
+  ],
+  "modalities": [
+    "sMRI",
+    "sMRI"
+  ],
+  "images": [
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINV01GPLNXC.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    },
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINV00CY2MDM.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    }
+  ],
+  "conversations": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Analyze this T1-weighted brain MRI scan (reference). Estimate the biological sex of the subject."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINV01GPLNXC.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "female."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Now analyze this T1-weighted MRI by comparing it with the reference scan. Estimate the biological sex of this subject."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINV00CY2MDM.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ""
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "subject_id": "NDARINV00CY2MDM",
+    "subject_label": "male",
+    "reference_id": "NDARINV01GPLNXC",
+    "reference_label": "female",
+    "comparison_type": "different",
+    "task": "sex_classification_via_comparison"
+  }
+}

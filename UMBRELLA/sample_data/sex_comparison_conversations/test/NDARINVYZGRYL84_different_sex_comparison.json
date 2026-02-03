@@ -1,0 +1,80 @@
+{
+  "task_id": "NDARINVYZGRYL84_different_sex_comparison",
+  "task_type": "T3",
+  "subject_ids": [
+    "NDARINVPZDDVLGW",
+    "NDARINVYZGRYL84"
+  ],
+  "modalities": [
+    "sMRI",
+    "sMRI"
+  ],
+  "images": [
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVPZDDVLGW.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    },
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVYZGRYL84.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    }
+  ],
+  "conversations": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Here is a T1-weighted brain MRI from a female participant. This will serve as your reference scan."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVPZDDVLGW.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Analyzed. I've noted the structural features of this female brain scan."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Analyze this scan relative to the reference. Classify the biological sex and explain key differences."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVYZGRYL84.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Based on comparison with the female reference scan, this appears to be a male subject. Key differences include relatively larger overall brain volume and different white matter distribution patterns."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "subject_id": "NDARINVYZGRYL84",
+    "subject_label": "male",
+    "reference_id": "NDARINVPZDDVLGW",
+    "reference_label": "female",
+    "comparison_type": "different",
+    "task": "sex_classification_via_comparison"
+  }
+}

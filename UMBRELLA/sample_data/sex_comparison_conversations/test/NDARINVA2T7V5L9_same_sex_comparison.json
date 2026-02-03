@@ -1,0 +1,80 @@
+{
+  "task_id": "NDARINVA2T7V5L9_same_sex_comparison",
+  "task_type": "T3",
+  "subject_ids": [
+    "NDARINV0T5DCF9K",
+    "NDARINVA2T7V5L9"
+  ],
+  "modalities": [
+    "sMRI",
+    "sMRI"
+  ],
+  "images": [
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINV0T5DCF9K.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    },
+    {
+      "path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVA2T7V5L9.nii.gz",
+      "token": "<image>",
+      "modality": "sMRI"
+    }
+  ],
+  "conversations": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Examine this structural brain MRI from a male subject. Pay attention to key anatomical features."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINV0T5DCF9K.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I've examined the male reference scan. Ready for comparison."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Now analyze this T1-weighted MRI by comparing it with the reference scan. Estimate the biological sex of this subject."
+        },
+        {
+          "type": "image",
+          "modality": "sMRI",
+          "image_path": "/pscratch/sd/h/heehaw/data/1.ABCD/2.sMRI_freesurfer_256/NDARINVA2T7V5L9.nii.gz"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "This scan likely belongs to a male subject. Key features align with the reference male scan in terms of overall brain volume and regional proportions."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "subject_id": "NDARINVA2T7V5L9",
+    "subject_label": "male",
+    "reference_id": "NDARINV0T5DCF9K",
+    "reference_label": "male",
+    "comparison_type": "same",
+    "task": "sex_classification_via_comparison"
+  }
+}
