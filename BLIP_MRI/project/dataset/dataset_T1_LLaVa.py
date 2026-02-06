@@ -74,18 +74,18 @@ class BaseDataset_T1(Dataset, Randomizable):
             image = apply_transform(self.image_transform, image, map_items=False)
             image = torch.tensor(image)
         return image
+
     
-    def __transform_text__(self, label, add_context=False, sex=None, age=None):
+    def __transform_text__(self, label, add_context=False, sex=None, age=None): 
         if len(self.label_names) == 1 and 'sex' in self.label_names:
-            if int(label) == 1: 
-                inst = f"{self.quest_template} Estimate sex of subject from this image. {self.ans_template} "
-                answer = f'male'
-            elif int(label) == 2: 
-                inst = f"{self.quest_template} Estimate sex of subject from this image. {self.ans_template} "
-                answer = f'female'
+            sex_text = 'male' if int(label) == 1 else 'female'
+            inst = f"{self.quest_template} Estimate sex of subject from this image. {self.ans_template}"
+            answer = f"The brain shows {sex_text} characteristics."
+      
         elif len(self.label_names) == 1 and 'age' in self.label_names: 
-            inst = f"{self.quest_template} Estimate age of subject from this image."
-            answer = f'{self.ans_template} {label}'
+            inst = f"{self.quest_template} Estimate age of subject from this image. {self.ans_template}"
+            answer = f"{label} years"
+            
         return inst, answer
 
 

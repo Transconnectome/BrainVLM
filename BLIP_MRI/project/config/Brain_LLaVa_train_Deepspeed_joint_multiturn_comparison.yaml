@@ -1,0 +1,40 @@
+wandb:
+    API_KEY: "YOUR_API_KEY"
+
+seed: 1234
+
+dataset:
+    # Target column
+    # Single-task:
+    target_col: "sex"  # Options: 'sex', 'age', 'diagnosis', 'bmi', etc.
+
+    # Multi-task (future support):
+    # target_col: ["sex", "age"]  # List for multiple targets
+
+    train_json:
+        - "./data/ABCD_sex_comparison_tasks_train.json"
+    val_json:
+        - "./data/ABCD_sex_comparison_tasks_val.json"
+    test_json:
+        - "./data/ABCD_sex_comparison_tasks_test.json"
+
+    # Image size
+    img_size: [120, 120, 120]
+
+
+model:
+    hf_name: "llava-hf/llava-interleave-qwen-0.5b-hf"
+    patch_size: [10, 10, 10]
+
+
+trainer:
+    max_epochs: 50
+    learning_rate: 0.00005
+    warmup_steps: 500
+    weight_decay: 0.01
+    per_device_batch_size: 1  # Multi-image (reference + query) requires more memory
+    gradient_accumulation_steps: 4
+    gradient_checkpointing: True
+    logging_steps: 1
+    ckpt_dir: "./hf_results/{}/last.ckpt"
+    resume_training: False

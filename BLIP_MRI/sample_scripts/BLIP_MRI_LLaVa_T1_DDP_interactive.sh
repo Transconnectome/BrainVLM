@@ -1,14 +1,14 @@
 
 set +x
 
-cd /pscratch/sd/h/heehaw/BLIP_MRI/project   #TODO: Change to your own scratch space
+cd /YOUR_PROJECT_DIRECTORY    #TODO: Change to your own scratch space
 
 
 module load python
 #module load pytorch/1.13.1
 module load cpe/23.03
 
-conda activate /pscratch/sd/h/heehaw/anaconda/BLIP_MRI   #TODO: Change to your own conda env
+conda activate BLIP_MRI_llava  #TODO: Change to your own conda env
 # conda activate py39
 # pip install timm
 #export MASTER_ADDR=`/bin/hostname -s`
@@ -16,9 +16,9 @@ conda activate /pscratch/sd/h/heehaw/anaconda/BLIP_MRI   #TODO: Change to your o
 #export MASTER_PORT=$(shuf -i 29500-65535 -n 1)
 
 export LIBRARY_PATH=$LD_LIBRARY_PATH
-export TORCH_EXTENSIONS_DIR=/pscratch/sd/h/heehaw   #TODO: Change to your own scratch space
-export HF_HOME=/pscratch/sd/h/heehaw/huggingface   #TODO: Change to your own scratch space
-export TORCH_HOME=/pscratch/sd/h/heehaw/   #TODO: Change to your own scratch space
+export TORCH_EXTENSIONS_DIR=/pscratch/sd/   #TODO: Change to your own scratch space
+export HF_HOME=/pscratch/sd/   #TODO: Change to your own scratch space
+export TORCH_HOME=/pscratch/sd/   #TODO: Change to your own scratch space
 
 
 # #recent version (24.3.30)
