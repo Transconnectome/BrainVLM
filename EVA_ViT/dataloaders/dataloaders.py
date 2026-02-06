@@ -203,9 +203,9 @@ def partition_dataset_finetuning(imageFiles_labels, args):
         images.append(image)
         labels.append(label)
 
-    ratio = 0.3
-    patch_size = (8, 8, 8)
-    num_patches = (args.img_size[0] // patch_size[0]) + (args.img_size[1] // patch_size[1]) + (args.img_size[2] // patch_size[2])
+    patch_size = args.patch_size
+    num_patches = (args.img_size[0] // patch_size) + (args.img_size[1] // patch_size) + (args.img_size[2] // patch_size)
+    #num_patches = (args.img_size[0] // patch_size[0]) + (args.img_size[1] // patch_size[1]) + (args.img_size[2] // patch_size[2])
 
     train_transform = Compose([AddChannel(),
                                Resize(tuple(args.img_size)),
