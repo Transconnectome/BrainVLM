@@ -77,7 +77,7 @@ class UMBRELLATrainingConfig:
     enable_memory_aware_batching: bool = True
     memory_budget_gb: float = 30.0
     gradient_checkpointing: bool = True
-    mixed_precision: str = "bf16"   #"fp32"
+    mixed_precision: str = "fp32"   #"fp32"
 
     # Logging and saving
     output_dir: str = "./hf_results/umbrella"
@@ -104,6 +104,9 @@ class UMBRELLATrainingConfig:
     eval_temperature: float = 0.7
     eval_top_p: float = 0.9
     eval_output_dir: str = "./eval_predictions"
+    
+    # DeepSpeed
+    deepspeed: Optional[str] = None
 
     @classmethod
     def from_yaml(cls, config_path: str) -> 'UMBRELLATrainingConfig':
@@ -133,11 +136,12 @@ class UMBRELLATrainingConfig:
             fMRI_patch_size=fMRI_model_config.get('patch_size', [16, 16, 16, 3]),
             batch_size=trainer_config.get('per_device_batch_size', 2),
             gradient_accumulation_steps=trainer_config.get('gradient_accumulation_steps', 1),
-            learning_rate=trainer_config.get('learning_rate', 5e-5),
+            learning_rate=trainer_config.get('learning_rate', 1e-5),
             num_epochs=trainer_config.get('max_epochs', 50),
             max_seq_length=2048,
             gradient_checkpointing=trainer_config.get('gradient_checkpointing', True),
             warmup_steps=trainer_config.get('warmup_steps', 500),
+            mixed_precision=trainer_config.get('mixed_precision', 'fp32'),
             output_dir=trainer_config.get('ckpt_dir', './hf_results/umbrella'),
             wandb_api_key=yaml_config.get('wandb', {}).get('API_KEY')
         )
@@ -181,7 +185,10 @@ class UMBRELLATrainingConfig:
             eval_output_dir=self.eval_output_dir,
             eval_max_new_tokens=self.eval_max_new_tokens,
             eval_temperature=self.eval_temperature,
-            eval_top_p=self.eval_top_p
+            eval_top_p=self.eval_top_p,
+            
+            # DeepSpeed
+            deepspeed=self.deepspeed
         )
 
 
@@ -342,6 +349,8 @@ def main():
     parser.add_argument('--batch-size', type=int)
     parser.add_argument('--learning-rate', type=float)
     parser.add_argument('--no-wandb', action='store_true')
+    parser.add_argument('--deepspeed', type=str, help='Path to deepspeed config json')
+    parser.add_argument('--local_rank', type=int, default=-1, help='Local rank for distributed training')
 
     args = parser.parse_args()
 
@@ -360,6 +369,7 @@ def main():
     if args.learning_rate: config.learning_rate = args.learning_rate
     if args.eval_output_dir: config.eval_output_dir = args.eval_output_dir
     if args.no_wandb: config.use_wandb = False
+    if args.deepspeed: config.deepspeed = args.deepspeed
 
     # Create output dir
     Path(config.output_dir).mkdir(parents=True, exist_ok=True)
