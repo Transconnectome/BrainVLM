@@ -48,7 +48,7 @@ class PatchEmbed(nn.Module):
         self.sMRI_patch_size = sMRI_patch_size
         self.sMRI_num_patches = sMRI_num_patches
         self.sMRI_proj = nn.Conv3d(in_chans, embed_dim, kernel_size=sMRI_patch_size, stride=sMRI_patch_size, dtype=dtype)
-        self.sMRI_positional_embeddings = nn.Parameter(torch.zeros(1, sMRI_num_patches, embed_dim))
+        self.sMRI_positional_embeddings = nn.Parameter(torch.zeros(1, sMRI_num_patches, embed_dim, dtype=dtype))
         trunc_normal_(self.sMRI_positional_embeddings, std=.02)
 
         # Patchifying layer for fMRI
@@ -57,8 +57,8 @@ class PatchEmbed(nn.Module):
         self.fMRI_size = fMRI_size
         self.fMRI_patch_size = fMRI_patch_size
         self.fMRI_num_patches = fMRI_num_patches
-        self.fMRI_proj = nn.Linear(in_features=in_chans * fMRI_patch_size[0] * fMRI_patch_size[1] * fMRI_patch_size[2] * fMRI_patch_size[3], out_features=embed_dim)
-        self.fMRI_positional_embeddings = nn.Parameter(torch.zeros(1, fMRI_num_patches, embed_dim))
+        self.fMRI_proj = nn.Linear(in_features=in_chans * fMRI_patch_size[0] * fMRI_patch_size[1] * fMRI_patch_size[2] * fMRI_patch_size[3], out_features=embed_dim, dtype=dtype)
+        self.fMRI_positional_embeddings = nn.Parameter(torch.zeros(1, fMRI_num_patches, embed_dim, dtype=dtype))
         trunc_normal_(self.fMRI_positional_embeddings, std=.02)
 
         if joint_optimization:
