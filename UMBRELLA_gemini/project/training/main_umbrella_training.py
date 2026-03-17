@@ -77,15 +77,15 @@ class UMBRELLATrainingConfig:
     enable_memory_aware_batching: bool = True
     memory_budget_gb: float = 30.0
     gradient_checkpointing: bool = True
-    mixed_precision: str = "fp32"
+    mixed_precision: str = "bf16"   #"fp32"
 
     # Logging and saving
     output_dir: str = "./hf_results/umbrella"
     logging_steps: int = 1
-    save_steps: int = 100
-    eval_steps: int = 100
+    save_steps: int = 25
+    eval_steps: int = 25
     save_total_limit: int = 3
-    warmup_steps: int = 100
+    warmup_steps: int = 25
 
     # Advanced logging
     log_image_statistics: bool = True
@@ -187,8 +187,20 @@ class UMBRELLATrainingConfig:
 
 def create_llava_model_with_custom_patch_embed(config: UMBRELLATrainingConfig) -> LlavaForConditionalGeneration:
     """Helper to load model and replace PatchEmbed."""
-    logger.info(f"Loading pre-trained model: {config.model_name}")
-    model = LlavaForConditionalGeneration.from_pretrained(config.model_name)
+    logger.info(f"Loading pre-trained model: {config.model_name} in {config.mixed_precision}")
+    
+    # Determined dtype
+    torch_dtype = torch.float32
+    if config.mixed_precision == "bf16":
+        torch_dtype = torch.bfloat16
+    elif config.mixed_precision == "fp16":
+        torch_dtype = torch.float16
+
+    model = LlavaForConditionalGeneration.from_pretrained(
+        config.model_name,
+        torch_dtype=torch_dtype,
+        low_cpu_mem_usage=True
+    )
     
     # Create custom PatchEmbed
     original_patch_embedding = model.vision_tower.vision_model.embeddings.patch_embedding
@@ -199,7 +211,8 @@ def create_llava_model_with_custom_patch_embed(config: UMBRELLATrainingConfig) -
         sMRI_patch_size=config.sMRI_patch_size,
         fMRI_size=config.fMRI_img_size,
         fMRI_patch_size=config.fMRI_patch_size,
-        embed_dim=embed_dim
+        embed_dim=embed_dim,
+        dtype=torch_dtype
     )
 
     # Replace & Freeze strategy
