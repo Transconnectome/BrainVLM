@@ -77,11 +77,12 @@ class UMBRELLATrainer(Trainer):
     def _compute_dummy_loss(self, model, active_modality):
         """
         Compute dummy loss for unused parameters to fix DDP and grad_fn errors.
-        
-        This ensures:
-        1. Inactive modality params (e.g. fMRI when training sMRI) get gradients (0.0).
-        2. Text-only batches still connect to trainable params (PatchEmbed), giving loss a grad_fn.
         """
+        # [NEW] Bypass for DeepSpeed: ZeRO-3 partitioning makes manual param access difficult.
+        # DeepSpeed handles unused parameters natively, so this workaround is not needed.
+        if self.is_deepspeed_enabled:
+            return torch.tensor(0.0, device=next(model.parameters()).device, requires_grad=True)
+
         # Unwrap model if DDP
         if hasattr(model, "module"):
             base_model = model.module
@@ -116,7 +117,10 @@ class UMBRELLATrainer(Trainer):
                         is_active_param = True
                 
                 if not is_active_param:
-                    dummy_loss = dummy_loss + (param.sum() * 0.0)
+                    # [FIX] For ZeRO-3 compatibility, we must ensure the dummy loss 
+                    # produces a gradient that matches the parameter's partition shape.
+                    # (param * 0.0).sum() satisfies this while keeping the param in the graph.
+                    dummy_loss = dummy_loss + (param * 0.0).sum()
                     
         return dummy_loss
 
@@ -137,8 +141,11 @@ class UMBRELLATrainer(Trainer):
         inputs.pop("task_ids", None)
         inputs.pop("sample_indices", None)
 
-        device = next(model.parameters()).device
-        model_dtype = next(model.parameters()).dtype
+        # Unwrap model for both DDP and DeepSpeed
+        base_model = model.module if hasattr(model, "module") else model
+        
+        device = next(base_model.parameters()).device
+        model_dtype = next(base_model.parameters()).dtype
         
         inputs = {
             k: v.to(device, dtype=model_dtype if isinstance(v, torch.Tensor) and v.is_floating_point() else None) 
@@ -169,9 +176,9 @@ class UMBRELLATrainer(Trainer):
             # Checking dimension relative to expected single image dim
             # ... (Assuming Collator returns correct flattened shape for now) ...
             
-            image_outputs = model.vision_tower(pixel_values, output_hidden_states=True)
-            sel_feats = image_outputs.hidden_states[model.config.vision_feature_layer]
-            sel_feats = model.multi_modal_projector(sel_feats)
+            image_outputs = base_model.vision_tower(pixel_values, output_hidden_states=True)
+            sel_feats = image_outputs.hidden_states[base_model.config.vision_feature_layer]
+            sel_feats = base_model.multi_modal_projector(sel_feats)
             
             batch_size = inputs['input_ids'].shape[0]
             total_images = sel_feats.shape[0]
@@ -188,10 +195,10 @@ class UMBRELLATrainer(Trainer):
 
         # 4. Dynamic Merge (Expand <image> tokens)
         IMAGE_TOKEN_ID = 151646 
-        if hasattr(model.config, "image_token_index"): IMAGE_TOKEN_ID = model.config.image_token_index
+        if hasattr(base_model.config, "image_token_index"): IMAGE_TOKEN_ID = base_model.config.image_token_index
 
         new_embeds, new_labels, new_masks = [], [], []
-        inputs_embeds = model.get_input_embeddings()(inputs['input_ids'])
+        inputs_embeds = base_model.get_input_embeddings()(inputs['input_ids'])
         
         batch_size = inputs['input_ids'].shape[0]
         for i in range(batch_size):
@@ -233,7 +240,7 @@ class UMBRELLATrainer(Trainer):
         batch_masks = pad_sequence(new_masks, batch_first=True, padding_value=0)
 
         # 5. LLM Forward
-        outputs = model.language_model(
+        outputs = base_model.language_model(
             inputs_embeds=batch_embeds,
             labels=batch_labels,
             attention_mask=batch_masks
@@ -244,7 +251,7 @@ class UMBRELLATrainer(Trainer):
         loss = outputs.loss + dummy_loss
 
         # 6. Logging & Gradient Norm
-        if self.state.global_step % 20 == 0 and self.model.training and self.state.global_step != getattr(self, "_last_log_step", -1):
+        if self.state.global_step % 20 == 0 and base_model.training and self.state.global_step != getattr(self, "_last_log_step", -1):
             self._last_log_step = self.state.global_step
             num_log_example = 4
             self._log_prediction(outputs.logits[:num_log_example], batch_labels[:num_log_example])
@@ -321,14 +328,15 @@ class UMBRELLATrainer(Trainer):
 
     def _generate_step(self, batch):
         """Generation logic: Expand -> Left Pad -> Trigger -> Generate"""
-        model = self.model
-        device = next(model.parameters()).device
+        # Unwrap model for both DDP and DeepSpeed
+        base_model = self.model.module if hasattr(self.model, "module") else self.model
+        device = next(base_model.parameters()).device
         
         # 1. Prepare Inputs
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         pixel_values = batch.get('pixel_values')
-        model_dtype = next(model.parameters()).dtype
+        model_dtype = next(base_model.parameters()).dtype
         
         if pixel_values is not None:
             pixel_values = pixel_values.to(device, dtype=model_dtype)
@@ -337,9 +345,9 @@ class UMBRELLATrainer(Trainer):
         image_features_per_sample = None
         
         if pixel_values is not None:
-            image_outputs = model.vision_tower(pixel_values, output_hidden_states=True)
-            sel_feats = image_outputs.hidden_states[model.config.vision_feature_layer]
-            sel_feats = model.multi_modal_projector(sel_feats)
+            image_outputs = base_model.vision_tower(pixel_values, output_hidden_states=True)
+            sel_feats = image_outputs.hidden_states[base_model.config.vision_feature_layer]
+            sel_feats = base_model.multi_modal_projector(sel_feats)
             
             # Reshape back to batch: Assumes collator gives flattened batch of images
             batch_size = input_ids.shape[0]
@@ -349,15 +357,15 @@ class UMBRELLATrainer(Trainer):
                 image_features_per_sample = sel_feats.view(batch_size, num_imgs, -1, sel_feats.shape[-1])
     
 
-        inputs_embeds = model.get_input_embeddings()(input_ids)
+        inputs_embeds = base_model.get_input_embeddings()(input_ids)
         
         # 3. Dynamic Merge (Expand)
         new_input_embeds = []
         new_attention_masks = []
         
         IMAGE_TOKEN_ID = 151646 
-        if hasattr(model.config, "image_token_index"):
-            IMAGE_TOKEN_ID = model.config.image_token_index
+        if hasattr(base_model.config, "image_token_index"):
+            IMAGE_TOKEN_ID = base_model.config.image_token_index
 
         batch_size = input_ids.shape[0]
         for i in range(batch_size):
@@ -393,7 +401,7 @@ class UMBRELLATrainer(Trainer):
         
         # Trigger Tokens ("<|im_start|>assistant")
         trigger_ids = self.tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False)
-        trigger_embeds = model.get_input_embeddings()(torch.tensor(trigger_ids, device=device))
+        trigger_embeds = base_model.get_input_embeddings()(torch.tensor(trigger_ids, device=device))
 
         #print(f"TEXT INPUT FOR GENERATION: {self.tokenizer.decode(torch.cat([torch.tensor(input_ids[0]).to('cpu'), torch.tensor(trigger_ids).to('cpu')]), skip_special_tokens=False)}")
         
@@ -425,7 +433,7 @@ class UMBRELLATrainer(Trainer):
         final_attention_masks = torch.stack(padded_masks_list)
 
         # 5. Generate
-        gen_out = model.generate(
+        gen_out = base_model.generate(
             inputs_embeds=final_inputs_embeds,
             attention_mask=final_attention_masks,
             max_new_tokens=self.args.eval_max_new_tokens,
