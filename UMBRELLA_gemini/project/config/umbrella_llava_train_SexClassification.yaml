@@ -55,6 +55,7 @@ trainer:
     per_device_batch_size: 4
     gradient_accumulation_steps: 4
     gradient_checkpointing: True
+    mixed_precision: "bf16"
     logging_steps: 20
     ckpt_dir: Null
     resume_training: False
