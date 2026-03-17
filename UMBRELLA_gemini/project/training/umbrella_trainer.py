@@ -138,8 +138,17 @@ class UMBRELLATrainer(Trainer):
         inputs.pop("sample_indices", None)
 
         device = next(model.parameters()).device
-        inputs = {k: v.to(device) if isinstance(v, torch.Tensor) and v.device != device else v for k, v in inputs.items()}
-        if raw_labels is not None: raw_labels = raw_labels.to(device)
+        model_dtype = next(model.parameters()).dtype
+        
+        inputs = {
+            k: v.to(device, dtype=model_dtype if isinstance(v, torch.Tensor) and v.is_floating_point() else None) 
+            if isinstance(v, torch.Tensor) and (v.device != device or (v.is_floating_point() and v.dtype != model_dtype)) 
+            else v 
+            for k, v in inputs.items()
+        }
+        
+        if raw_labels is not None: 
+            raw_labels = raw_labels.to(device)
 
         # 2. Vision Feature Extraction & Modality Detection
         pixel_values = inputs.get('pixel_values')
@@ -235,8 +244,10 @@ class UMBRELLATrainer(Trainer):
         loss = outputs.loss + dummy_loss
 
         # 6. Logging & Gradient Norm
-        if self.state.global_step % 20 == 0 and self.model.training:
-            self._log_prediction(outputs.logits, batch_labels)
+        if self.state.global_step % 20 == 0 and self.model.training and self.state.global_step != getattr(self, "_last_log_step", -1):
+            self._last_log_step = self.state.global_step
+            num_log_example = 4
+            self._log_prediction(outputs.logits[:num_log_example], batch_labels[:num_log_example])
             
         if self.args.normalize_gradients_by_batch_size:
             loss = loss * (self.args.base_batch_size / batch_size)
@@ -317,11 +328,10 @@ class UMBRELLATrainer(Trainer):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         pixel_values = batch.get('pixel_values')
+        model_dtype = next(model.parameters()).dtype
         
         if pixel_values is not None:
-            pixel_values = pixel_values.to(device)
-            #if pixel_values.dim() == 5:
-            #    pixel_values = pixel_values.view(-1, *pixel_values.shape[2:])
+            pixel_values = pixel_values.to(device, dtype=model_dtype)
 
         # 2. Feature Extraction & Expansion (Same as compute_loss logic)
         image_features_per_sample = None
