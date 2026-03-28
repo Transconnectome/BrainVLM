@@ -1,4 +1,4 @@
-name: /pscratch/sd/h/heehaw/anaconda/BLIP_MRI_llava
+name: BLIP_MRI_llava
 channels:
   - conda-forge
 dependencies:
@@ -125,7 +125,7 @@ dependencies:
       - sympy==1.14.0
       - threadpoolctl==3.6.0
       - timm==0.4.12
-      - tokenizers==0.13.3
+      - tokenizers>=0.20
       - torch==2.8.0
       - torchvision==0.23.0
       - tqdm==4.67.1
@@ -138,4 +138,4 @@ dependencies:
       - wandb==0.17.0
       - xxhash==3.5.0
       - yarl==1.20.1
-prefix: /pscratch/sd/h/heehaw/anaconda/BLIP_MRI_llava
+prefix: /YOUR_DIRECTORY
