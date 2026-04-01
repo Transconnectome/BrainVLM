@@ -322,12 +322,13 @@ class VisionTransformer(nn.Module):
                 init_values=init_values, window_size=self.patch_embed.patch_shape if use_rel_pos_bias else None, use_lora=use_lora)
             for i in range(depth)])
         self.use_projector = use_projector
-        self.projectors = nn.ModuleList([
-            Block(
-                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-                init_values=init_values, window_size=self.patch_embed.patch_shape if use_rel_pos_bias else None, use_lora=False)
-            for i in range(2)])
+        if self.use_projector:
+            self.projectors = nn.ModuleList([
+                Block(
+                    dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                    drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                    init_values=init_values, window_size=self.patch_embed.patch_shape if use_rel_pos_bias else None, use_lora=False)
+                for i in range(2)])
 
         if self.pos_embed_3d is not None:
             trunc_normal_(self.pos_embed_3d, std=.02)

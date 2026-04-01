@@ -86,17 +86,22 @@ class calculating_eval_metrics(torch.nn.Module):
                 total, correct = total.sum().detach().cpu(), correct.sum().detach().cpu() 
                 result['total'], result['correct'] = total.item(), correct.item() 
                 result['ACC'] = 100 * correct.item() / total.item() 
+                true = true.long()
+                pred = torch.softmax(pred, dim=1)
                 if self.num_classes == 2:
-                    true, pred = torch.cat(true), torch.cat(pred)
-                    true = true.long()
                     result['AUROC'] = roc_auc_score(true.detach().cpu(), pred[:, 1].detach().cpu())
+                else:
+                    result['AUROC'] = roc_auc_score(true.detach().cpu(), pred.detach().cpu(), multi_class='ovr', average='macro')
             else: 
                 result['total'] = self.total.sum().item()
                 result['correct'] = self.correct.sum().item()
                 result['ACC'] = 100 * self.correct.sum().item() /self.total.sum().item() 
+                self.true = self.true.long()
+                self.pred = torch.softmax(self.pred, dim=1)
                 if self.num_classes ==2:
-                    self.true = self.true.long()
                     result['AUROC'] = roc_auc_score(self.true.detach().cpu(), self.pred[:, 1].detach().cpu())
+                else:
+                    result['AUROC'] = roc_auc_score(self.true.detach().cpu(), self.pred.detach().cpu(), multi_class='ovr', average='macro')
              
         elif self.num_classes == 1:
             if self.is_DDP:
