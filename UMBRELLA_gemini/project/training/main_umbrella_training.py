@@ -206,7 +206,8 @@ def create_llava_model_with_custom_patch_embed(config: UMBRELLATrainingConfig) -
     model = LlavaForConditionalGeneration.from_pretrained(
         config.model_name,
         torch_dtype=torch_dtype,
-        low_cpu_mem_usage=True
+        low_cpu_mem_usage=True,
+        attn_implementation="sdpa"
     )
     
     # Create custom PatchEmbed
@@ -235,6 +236,7 @@ def create_llava_model_with_custom_patch_embed(config: UMBRELLATrainingConfig) -
             
     if config.gradient_checkpointing:
         model.gradient_checkpointing_enable()
+        model.config.use_cache = False
         
     return model
 
